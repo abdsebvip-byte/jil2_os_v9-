@@ -5,6 +5,7 @@ import asyncio
 from scanner import FreeMarketScanner
 from intelligence import QuantIntelligence
 from news_radar import SECNewsRadar
+from notifier import TelegramNotifier
 
 # 1. إعداد الصفحة والأنماط البصرية الراقية (Premium Dark Tech Theme)
 st.set_page_config(page_title="منظومة رادار السيولة التراكمية v10.0", layout="wide")
@@ -240,6 +241,22 @@ def run_session_pipeline(session_name):
                     <p style='font-size:15px; color:#3b82f6;margin:0;'><b>مؤشر الثقة الميكروي: {top_stock['Confidence_Score']}/10 وفق خوارزمية الغابة المعزولة (Isolation Forest)</b></p>
                 </div>
                 """, unsafe_allow_html=True)
+                
+                # زر إرسال التنبيه الفوري للتيليجرام
+                notifier = TelegramNotifier()
+                if st.button("📢 إرسال إشارة التنبيه للتيليجرام", key="send_tg_alert"):
+                    success = notifier.send_breakout_alert(
+                        symbol=top_stock['Symbol'],
+                        price=top_stock['Price'],
+                        change=top_stock['Change_%'],
+                        rvol=top_stock['RVOL'],
+                        score=top_stock['Conviction_Score'],
+                        confidence=top_stock['Confidence_Score']
+                    )
+                    if success:
+                        st.success("✅ تم إرسال إشارة التنبيه بنجاح إلى هاتفك عبر تيليجرام!")
+                    else:
+                        st.error("❌ فشل إرسال التنبيه. يرجى التحقق من صحة المفاتيح في config.env أو Streamlit Secrets.")
                 
                 st.write("#### 🛡️ فحص طبقات اليقين السبعة للسهم المتصدر:")
                 cols = st.columns(7)
