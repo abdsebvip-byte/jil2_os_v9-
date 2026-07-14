@@ -1,0 +1,11 @@
+# Ignore Python virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# Ignore secret configuration files containing API keys
+config.env
+.env
+
+# Ignore Streamlit local run configs
+.streamlit/
