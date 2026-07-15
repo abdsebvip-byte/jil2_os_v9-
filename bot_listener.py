@@ -97,7 +97,7 @@ class TelegramBotListener:
         if not self.gemini_key:
             return None
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.gemini_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.gemini_key}"
         headers = {"Content-Type": "application/json"}
         
         system_instruction = (
