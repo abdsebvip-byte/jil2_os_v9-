@@ -186,12 +186,13 @@ with c4:
 st.write("---")
 
 # 4. علامات التبويب الموزعة للفترات
-t1, t2, t3, t4, t5 = st.tabs([
+t1, t2, t3, t4, t5, t6 = st.tabs([
     "🛰️ جلسة ما قبل السوق", 
     "📊 الجلسة الرسمية للسوق", 
     "🌙 جلسة بعد الإغلاق", 
     "📡 رادار الأخبار الفورية (SEC)",
-    "🏆 سجل صيد اليقين التراكمي"
+    "🏆 سجل صيد اليقين التراكمي",
+    "📊 محرك الاختبار التاريخي"
 ])
 
 def run_session_pipeline(session_name):
@@ -435,3 +436,80 @@ with t5:
                         st.markdown(f'<div class="ai-section"><h4>🎯 تحليل سهم {item["Symbol"]}</h4><p style="font-size:16px;line-height:1.6;color:#ffffff !important;">{item["Guidance"]}</p></div>', unsafe_allow_html=True)
             else:
                 st.info("⏳ لم يتم رصد أي أسهم تمر بمرحلة تجميع صامت ومطابقة للشروط الصارمة حالياً.")
+
+with t6:
+    st.markdown("### 📊 محرك الاختبار التاريخي وتقييم الخوارزميات (Backtesting Engine)")
+    st.write("يقوم هذا المحرك بمحاكاة تاريخية لـ 6 أشهر سابقة للتحقق من نسب النجاح وعامل الربحية لجميع الأكواد والخوارزميات.")
+    
+    # خيارات التحكم
+    col_strat, col_cap = st.columns(2)
+    with col_strat:
+        strategy_choice = st.selectbox(
+            "اختر الاستراتيجية للتحليل التاريخي:", 
+            ["ACCUMULATION", "BREAKOUT"], 
+            format_func=lambda x: "🏆 التجميع الصامت (Consolidation & Float)" if x == "ACCUMULATION" else "⚡ الاختراقات واليقين (Volume & SMA Breakout)"
+        )
+    with col_cap:
+        initial_cap = st.number_input("رأس المال الافتراضي للبدء ($):", min_value=100.0, value=1000.0, step=100.0)
+        
+    run_backtest = st.button("⚡ بدء الاختبار التاريخي الشامل")
+    if run_backtest:
+        with st.spinner("جاري تنزيل 180 يوماً من البيانات التاريخية لـ 570+ سهم ومحاكاة التداول..."):
+            from backtester import QuantBacktester
+            tester = QuantBacktester()
+            results = tester.run_backtest(strategy_type=strategy_choice, days_to_test=180, initial_capital=initial_cap)
+            
+            if "error" in results:
+                st.error(f"❌ {results['error']}")
+            else:
+                st.success("✅ تم الانتهاء من الاختبار التاريخي بنجاح!")
+                
+                # عرض إحصائيات الأداء في كروت تفاعلية جميلة
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    st.metric("إجمالي الصفقات", results["total_trades"])
+                with c2:
+                    st.metric("نسبة النجاح (Win Rate)", f"{results['win_rate_pct']:.1f}%")
+                with c3:
+                    st.metric("عامل الربحية (Profit Factor)", f"{results['profit_factor']:.2f}")
+                with c4:
+                    st.metric("أقصى تراجع (Max Drawdown)", f"{results['max_drawdown_pct']:.1f}%")
+                    
+                # عرض النتيجة النهائية للمحفظة
+                st.markdown(f"📈 **القيمة النهائية للمحفظة بعد 6 أشهر:** `{results['final_wealth']:,.2f}$` (العائد الكلي: `{results['net_return_pct']:+.1f}%`)")
+                
+                # رسم مخطط نمو رأس المال باستخدام Plotly
+                df_equity = pd.DataFrame(results["equity_curve"])
+                import plotly.express as px
+                fig = px.line(
+                    df_equity, 
+                    x="Date", 
+                    y="Capital", 
+                    title="📈 منحنى نمو رأس المال الافتراضي (Equity Growth)", 
+                    labels={"Capital": "قيمة المحفظة ($)", "Date": "التاريخ"}
+                )
+                fig.update_layout(
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font_color="#ffffff",
+                    title_font_size=18,
+                    xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.1)"),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.1)")
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # عرض جدول تفصيلي بكافة الصفقات التي تمت
+                if results["trades"]:
+                    st.markdown("### 📋 سجل الصفقات المحاكاة بالتفصيل:")
+                    df_trades = pd.DataFrame(results["trades"])
+                    df_trades.columns = ["رمز السهم", "الاستراتيجية", "تاريخ الدخول", "تاريخ الخروج", "سعر الدخول", "سعر الخروج", "الأرباح ($)", "الربح المئوي (%)", "حالة الصفقة"]
+                    
+                    # تنسيق الأرقام لسهولة القراءة
+                    df_trades["سعر الدخول"] = df_trades["سعر الدخول"].apply(lambda x: f"${x:.2f}")
+                    df_trades["سعر الخروج"] = df_trades["سعر الخروج"].apply(lambda x: f"${x:.2f}")
+                    df_trades["الأرباح ($)"] = df_trades["الأرباح ($)"].apply(lambda x: f"{x:+.2f}$")
+                    df_trades["الربح المئوي (%)"] = df_trades["الربح المئوي (%)"].apply(lambda x: f"{x:+.1f}%")
+                    
+                    st.dataframe(df_trades, use_container_width=True, hide_index=True)
+                else:
+                    st.info("ℹ️ لم يتم توليد أي صفقات خلال فترة الفحص التاريخية المحددة.")
