@@ -75,7 +75,6 @@ class TelegramBotListener:
         }
         
         if show_keyboard:
-            # لوحة المفاتيح التفاعلية الدائمة المحدثة بأربعة أزرار
             keyboard = {
                 "keyboard": [
                     [{"text": "💼 عرض المحفظة"}, {"text": "⚡ تصفية السوق"}],
@@ -125,15 +124,22 @@ class TelegramBotListener:
 
     def process_message(self, text):
         text = text.strip()
-        parts = text.split()
+        # توحيد التاء المربوطة والهاء في نهاية الكلمات لتجنب مشاكل الإملاء العربي (مثال: استشارة مقابل استشاره)
+        normalized_text = text.replace("ة", "ه").lower()
+        parts = normalized_text.split()
         if not parts:
             return
             
         command = parts[0]
+        original_parts = text.split()  # نأخذ الأجزاء الأصلية للحفاظ على حالة الحروف الكبيرة للرموز
         
         # 1. أمر الاستشارة وتحليل السهم
-        if command in ["استشارة", "تحليل"] and len(parts) > 1:
-            symbol = parts[1].upper()
+        if command in ["استشاره", "تحليل", "استشارة"]:
+            if len(original_parts) < 2:
+                self.send_message("⚠️ صيغة الاستشارة غير مكتملة. الصيغة الصحيحة:\n`استشارة [رمز السهم]` (مثال: `استشارة CLSK`)")
+                return
+                
+            symbol = original_parts[1].upper()
             self.send_message(f"🔍 جاري تحليل السهم `{symbol}` لحظياً وفق معادلة اليقين...")
             price = self.get_live_price(symbol)
             if price <= 0.0:
@@ -179,10 +185,13 @@ class TelegramBotListener:
                 self.send_message(f"❌ حدث خطأ أثناء تحليل السهم: {str(e)}")
 
         # 2. أمر الشراء الافتراضي
-        elif command == "شراء" and len(parts) > 2:
-            symbol = parts[1].upper()
+        elif command == "شراء":
+            if len(original_parts) < 3:
+                self.send_message("⚠️ صيغة الشراء غير مكتملة. الصيغة الصحيحة:\n`شراء [رمز السهم] [الكمية]` (مثال: `شراء CLSK 100`)")
+                return
+            symbol = original_parts[1].upper()
             try:
-                quantity = float(parts[2])
+                quantity = float(original_parts[2])
                 price = self.get_live_price(symbol)
                 if price <= 0.0:
                     self.send_message(f"❌ فشل جلب سعر السهم اللحظي لـ `{symbol}`.")
@@ -193,10 +202,13 @@ class TelegramBotListener:
                 self.send_message("⚠️ صيغة الكمية غير صحيحة. مثال: `شراء CLSK 10`")
 
         # 3. أمر البيع الافتراضي
-        elif command == "بيع" and len(parts) > 2:
-            symbol = parts[1].upper()
+        elif command == "بيع":
+            if len(original_parts) < 3:
+                self.send_message("⚠️ صيغة البيع غير مكتملة. الصيغة الصحيحة:\n`بيع [رمز السهم] [الكمية]` (مثال: `بيع CLSK 50`)")
+                return
+            symbol = original_parts[1].upper()
             try:
-                quantity = float(parts[2])
+                quantity = float(original_parts[2])
                 price = self.get_live_price(symbol)
                 if price <= 0.0:
                     self.send_message(f"❌ فشل جلب سعر السهم اللحظي لـ `{symbol}`.")
@@ -207,7 +219,7 @@ class TelegramBotListener:
                 self.send_message("⚠️ صيغة الكمية غير صحيحة. مثال: `بيع CLSK 10`")
 
         # 4. أمر عرض المحفظة الافتراضية
-        elif "محفظة" in text or "المحفظة" in text:
+        elif "محفظه" in normalized_text or "محفظة" in normalized_text:
             portfolio = self.db.get_portfolio()
             cash = self.db.get_cash()
             if not portfolio:
@@ -246,7 +258,7 @@ class TelegramBotListener:
             self.send_message(msg)
 
         # 5. أمر مسح التجميع الصامت
-        elif "تجميع" in text or "تجميع صامت" in text or "🔍 تجميع صامت" in text:
+        elif "تجميع" in normalized_text:
             self.send_message("🔬 جاري فحص السوق ورصد التجميع الصامت والـ Float المنخفض...")
             try:
                 from accumulation import SilentAccumulationScanner
@@ -268,7 +280,7 @@ class TelegramBotListener:
                 self.send_message(f"❌ حدث خطأ أثناء فحص التجميع الصامت: {str(e)}")
 
         # 6. أمر مسح السوق وتصفية الفرص الفورية
-        elif "تصفية" in text or "فحص" in text:
+        elif "تصفيه" in normalized_text or "تصفية" in normalized_text or "فحص" in normalized_text:
             self.send_message("🔬 جاري مسح السوق وتصفية أفضل الفرص السبعة حالياً بالـ ML...")
             try:
                 symbols = self.scanner.fetch_all_us_symbols()
@@ -310,7 +322,7 @@ class TelegramBotListener:
                 self.send_message(f"❌ حدث خطأ أثناء فحص السوق: {str(e)}")
 
         # 7. دليل المساعدة والتعليمات الافتراضي
-        elif "دليل" in text or "تعليمات" in text or "مساعدة" in text:
+        elif "دليل" in normalized_text or "تعليمات" in normalized_text or "مساعده" in normalized_text or "مساعدة" in normalized_text:
             help_text = (
                 "👋 *مرحباً بك يا أبو فيصل في مساعد التداول التفاعلي!*\n\n"
                 "إليك الأوامر المتاحة باللغة العربية للتحكم في رادارك:\n\n"
