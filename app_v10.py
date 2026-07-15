@@ -120,6 +120,17 @@ scanner = FreeMarketScanner()
 intel = QuantIntelligence()
 news_radar = SECNewsRadar()
 
+# تفعيل مشغل الفحص التلقائي الخلفي لإرسال الإشارات لتيليجرام 24 ساعة
+@st.cache_resource
+def initialize_background_auto_scanner():
+    import threading
+    from auto_scanner import start_scheduler
+    thread = threading.Thread(target=start_scheduler, daemon=True)
+    thread.start()
+    return "ACTIVE"
+
+auto_status = initialize_background_auto_scanner()
+
 # رصد الجلسة الزمنية الحالية
 current_session = scanner.get_current_market_session()
 session_translation = {
@@ -141,7 +152,7 @@ with c2:
 with c3: 
     st.markdown(f'<div class="metric-card"><h4 style="color:#94a3b8;margin:0;font-size:15px;">حالة الجلسة الحالية</h4><h3 style="color:#f59e0b;margin:10px 0;font-size:18px;">{session_translation.get(current_session)}</h3></div>', unsafe_allow_html=True)
 with c4:
-    st.markdown(f'<div class="metric-card"><h4 style="color:#94a3b8;margin:0;font-size:15px;">درع الاتصال البرمجي</h4><h2 style="color:#3b82f6;margin:10px 0;font-size:28px;">مفعل مجاناً 🌐</h2></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-card"><h4 style="color:#94a3b8;margin:0;font-size:15px;">المستشعر التلقائي لتيليجرام</h4><h2 style="color:#10b981;margin:10px 0;font-size:28px;">نشط بالخلفية 📡</h2></div>', unsafe_allow_html=True)
 
 st.write("---")
 
