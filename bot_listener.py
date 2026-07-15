@@ -112,7 +112,7 @@ class TelegramBotListener:
         }
 
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=10)
+            response = requests.post(url, headers=headers, json=payload, timeout=30)
             if response.status_code == 200:
                 data = response.json()
                 reply = data['candidates'][0]['content']['parts'][0]['text']
