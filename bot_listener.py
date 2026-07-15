@@ -115,7 +115,9 @@ class TelegramBotListener:
             "contents": [{"parts": [{"text": user_message}]}],
             "systemInstruction": {"parts": [{"text": system_instruction}]},
             "generationConfig": {
-                "maxOutputTokens": 800  # زيادة سقف المخرجات للسماح بنقاشات عميقة وذكية
+                "maxOutputTokens": 450,  # سقف متوازن لردود تفصيلية سريعة
+                "temperature": 0.4,       # تقليل العشوائية لتسريع التوليد من سيرفرات جوجل
+                "topP": 0.9
             }
         }
 
