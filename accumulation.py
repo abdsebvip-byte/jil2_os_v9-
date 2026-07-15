@@ -45,8 +45,8 @@ class SilentAccumulationScanner:
                     
                 price = float(p_info.get("regularMarketPrice", 0.0))
                 
-                # تصفية السعر الصارمة بين 2$ و 10$ لتقليل الإشارات الخاطئة وتجنب المضاربات الوهمية
-                if price < 2.0 or price > 10.0:
+                # تصفية السعر لتشمل الأسهم الرخيصة جداً (بين 0.1$ و 10$) بناءً على طلبك لاقتناص طفرات البيني ستوكس
+                if price < 0.1 or price > 10.0:
                     continue
                 
                 # جلب بيانات الأسهم الحرة (Float Shares)
