@@ -38,15 +38,24 @@ class FreeMarketScanner:
 
     def fetch_all_us_symbols(self):
         """
-        Pull all active tickers (gainers + most active) from Yahoo Finance screeners.
+        Pull all active tickers from multiple Yahoo Finance screeners to expand coverage.
         """
-        print("fetch_all_us_symbols: Querying Yahoo Screener for active symbols...")
+        print("fetch_all_us_symbols: Querying Yahoo Screeners for active symbols...")
+        screeners_to_query = [
+            'day_gainers', 
+            'most_actives', 
+            'small_cap_gainers', 
+            'growth_technology_stocks', 
+            'most_shorted_stocks', 
+            'upside_breakout_stocks_daily',
+            'fifty_two_wk_gainers'
+        ]
         try:
-            data = self.screener.get_screeners(screen_ids=['day_gainers', 'most_actives'], count=200)
+            data = self.screener.get_screeners(screen_ids=screeners_to_query, count=150)
             quotes = []
             seen_symbols = set()
             
-            for key in ['day_gainers', 'most_actives']:
+            for key in screeners_to_query:
                 screener_data = data.get(key, {})
                 if isinstance(screener_data, dict):
                     raw_quotes = screener_data.get('quotes', [])
@@ -58,7 +67,7 @@ class FreeMarketScanner:
             
             self.cached_quotes = quotes
             symbols = list(seen_symbols)
-            print(f"fetch_all_us_symbols: Found {len(symbols)} active stocks moving in the entire market.")
+            print(f"fetch_all_us_symbols: Found {len(symbols)} unique active stocks moving in the market.")
             return symbols
         except Exception as e:
             print(f"fetch_all_us_symbols: Screener query failed: {str(e)}")

@@ -24,11 +24,17 @@ class QuantIntelligence:
                 avg_vol = float(q.get("averageDailyVolume3Month", 100000.0))
                 rvol = volume / avg_vol if avg_vol > 0 else 1.0
                 
-                # مواءمة الأسعار بحسب الجلسة
+                prev_close = float(q.get("regularMarketPreviousClose", price))
+                
+                # مواءمة الأسعار والنسب المئوية بحسب الجلسة
                 if session == "PRE_MARKET" and q.get("preMarketPrice") is not None:
                     price = float(q.get("preMarketPrice"))
+                    if prev_close > 0:
+                        change = ((price - prev_close) / prev_close) * 100
                 elif session == "AFTER_HOURS" and q.get("postMarketPrice") is not None:
                     price = float(q.get("postMarketPrice"))
+                    if prev_close > 0:
+                        change = ((price - prev_close) / prev_close) * 100
 
                 if price <= 0.0:
                     continue
@@ -80,10 +86,15 @@ class QuantIntelligence:
         open_price = float(quote.get("regularMarketOpen", price))
         prev_close = float(quote.get("regularMarketPreviousClose", price))
         
+        # مواءمة الأسعار والنسب المئوية بناءً على الجلسة الحالية
         if session == "PRE_MARKET" and quote.get("preMarketPrice") is not None:
             price = float(quote.get("preMarketPrice"))
+            if prev_close > 0:
+                price_change = ((price - prev_close) / prev_close) * 100
         elif session == "AFTER_HOURS" and quote.get("postMarketPrice") is not None:
             price = float(quote.get("postMarketPrice"))
+            if prev_close > 0:
+                price_change = ((price - prev_close) / prev_close) * 100
 
         # الطبقة 1: فلتر السعر (<= 20$)
         if 0.0 < price <= 20.0:
