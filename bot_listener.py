@@ -207,7 +207,7 @@ class TelegramBotListener:
                 self.send_message("⚠️ صيغة الكمية غير صحيحة. مثال: `بيع CLSK 10`")
 
         # 4. أمر عرض المحفظة الافتراضية
-        elif text in ["محفظة", "المحفظة", "💼 عرض المحفظة"]:
+        elif "محفظة" in text or "المحفظة" in text:
             portfolio = self.db.get_portfolio()
             cash = self.db.get_cash()
             if not portfolio:
@@ -246,7 +246,7 @@ class TelegramBotListener:
             self.send_message(msg)
 
         # 5. أمر مسح السوق وتصفية الفرص
-        elif text in ["تصفية", "فحص", "⚡ تصفية السوق"]:
+        elif "تصفية" in text or "فحص" in text:
             self.send_message("🔬 جاري مسح السوق وتصفية أفضل الفرص السبعة حالياً بالـ ML...")
             try:
                 symbols = self.scanner.fetch_all_us_symbols()
@@ -288,7 +288,7 @@ class TelegramBotListener:
                 self.send_message(f"❌ حدث خطأ أثناء فحص السوق: {str(e)}")
 
         # 6. دليل المساعدة والتعليمات الافتراضي
-        elif text in ["دليل", "تعليمات", "📖 دليل الأوامر"]:
+        elif "دليل" in text or "تعليمات" in text or "مساعدة" in text:
             help_text = (
                 "👋 *مرحباً بك يا أبو فيصل في مساعد التداول التفاعلي!*\n\n"
                 "إليك الأوامر المتاحة باللغة العربية للتحكم في رادارك:\n\n"
@@ -316,7 +316,7 @@ class TelegramBotListener:
                     self.send_message("⚠️ لم يتمكن خادم المستشار من الرد حالياً.")
             else:
                 # إذا لم يكن هناك مفتاح للذكاء الاصطناعي، نعرض دليل المساعدة الافتراضي
-                self.process_message("📖 دليل الأوامر")
+                self.process_message("دليل")
 
     def start_polling(self):
         print("BotListener: Start polling for Telegram updates...")
