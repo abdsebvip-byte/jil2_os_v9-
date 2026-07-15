@@ -93,6 +93,7 @@ class TelegramBotListener:
     def call_gemini_advisor(self, user_message):
         """
         Calls Gemini API dynamically to provide free-form conversational advice in Arabic.
+        Includes automatic retry, 60s timeout, and response length limitation.
         """
         if not self.gemini_key:
             return None
@@ -103,24 +104,41 @@ class TelegramBotListener:
         system_instruction = (
             "أنت مساعد تداول خوارزمي كمي وخبير مالي ذكي وخاص بأبو فيصل. تجيب باللغة العربية بأسلوب احترافي وجاف ومباشر ومبني على التحليل الكمي والرياضيات الميكروية لحركة الأسعار والسيولة. "
             "المنصة الحالية مبنية على استراتيجية الفحص بسبع طبقات يقين مع خوارزمية Isolation Forest لرصد الشذوذ الحجمي. "
-            "لا تعطي وعوداً مالية مبالغ فيها ولا تشجع على الطمع أو الـ FOMO. ركز على إدارة المخاطر ومعدلات النجاح الإحصائية."
+            "لا تعطي وعوداً مالية مبالغ فيها ولا تشجع على الطمع أو الـ FOMO. ركز على إدارة المخاطر ومعدلات النجاح الإحصائية. "
+            "ملاحظة هامة جداً: يجب أن تكون إجابتك مركزة وموجزة ومباشرة للغاية وفي حدود 3 إلى 5 أسطر كحد أقصى لتجنب بطء الاستجابة عبر الشبكة."
         )
 
         payload = {
             "contents": [{"parts": [{"text": user_message}]}],
-            "systemInstruction": {"parts": [{"text": system_instruction}]}
+            "systemInstruction": {"parts": [{"text": system_instruction}]},
+            "generationConfig": {
+                "maxOutputTokens": 300  # حصر الاستجابة لتفادي تأخير الشبكة والتنزيل
+            }
         }
 
-        try:
-            response = requests.post(url, headers=headers, json=payload, timeout=30)
-            if response.status_code == 200:
-                data = response.json()
-                reply = data['candidates'][0]['content']['parts'][0]['text']
-                return reply
-            else:
-                return f"⚠️ خادم الذكاء الاصطناعي استجاب برمز خطأ: {response.status_code}"
-        except Exception as e:
-            return f"⚠️ تعذر الاتصال بمحرك الاستشارات الذكي: {str(e)}"
+        # آلية إعادة المحاولة تلقائياً لمرتين متتاليتين لتجنب الانقطاع المؤقت
+        for attempt in range(2):
+            try:
+                response = requests.post(url, headers=headers, json=payload, timeout=60)
+                if response.status_code == 200:
+                    data = response.json()
+                    reply = data['candidates'][0]['content']['parts'][0]['text']
+                    return reply
+                elif response.status_code == 503:
+                    # في حال وجود ضغط مؤقت، انتظر ثانية ونصف وجرب مجدداً
+                    time.sleep(1.5)
+                    continue
+                else:
+                    return f"⚠️ خادم الذكاء الاصطناعي استجاب برمز خطأ: {response.status_code}"
+            except requests.exceptions.Timeout:
+                if attempt == 0:
+                    time.sleep(1)
+                    continue
+                return "⚠️ تعذر الاتصال بمحرك الاستشارات الذكي: انتهت مهلة الـ 60 ثانية دون استجابة."
+            except Exception as e:
+                return f"⚠️ تعذر الاتصال بمحرك الاستشارات الذكي: {str(e)}"
+        
+        return "⚠️ تعذر الاتصال بمحرك الاستشارات الذكي حالياً بسبب الضغط العالي على الخوادم."
 
     def process_message(self, text):
         text = text.strip()
