@@ -131,6 +131,24 @@ def initialize_background_auto_scanner():
 
 auto_status = initialize_background_auto_scanner()
 
+# 2.1 إعداد شريط جانبي لأدوات التحكم والاختبار
+st.sidebar.markdown("### 🛠️ أدوات التحكم والربط")
+st.sidebar.write("استخدم هذا الزر لإرسال تنبيه عينة والتأكد من نجاح اتصال بوت تيليجرام بجوالك في أي وقت:")
+if st.sidebar.button("📢 إرسال إشارة تجريبية لتيليجرام", key="sidebar_tg_test"):
+    notifier = TelegramNotifier()
+    success = notifier.send_breakout_alert(
+        symbol="TEST",
+        price=12.45,
+        change=15.8,
+        rvol=3.5,
+        score=90,
+        confidence=8.5
+    )
+    if success:
+        st.sidebar.success("✅ تم إرسال رسالة الاختبار بنجاح!")
+    else:
+        st.sidebar.error("❌ فشل الإرسال، تحقق من الأسرار.")
+
 # رصد الجلسة الزمنية الحالية
 current_session = scanner.get_current_market_session()
 session_translation = {
