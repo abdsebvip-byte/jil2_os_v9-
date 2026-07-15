@@ -44,11 +44,7 @@ class FreeMarketScanner:
         screeners_to_query = [
             'day_gainers', 
             'most_actives', 
-            'small_cap_gainers', 
-            'growth_technology_stocks', 
-            'most_shorted_stocks', 
-            'upside_breakout_stocks_daily',
-            'fifty_two_wk_gainers'
+            'small_cap_gainers'
         ]
         try:
             data = self.screener.get_screeners(screen_ids=screeners_to_query, count=150)
