@@ -131,6 +131,17 @@ def initialize_background_auto_scanner():
 
 auto_status = initialize_background_auto_scanner()
 
+# تفعيل خادم البوت التفاعلي لتلقي أوامر المحفظة والاستشارات بالعربية 24 ساعة
+@st.cache_resource
+def initialize_interactive_bot():
+    import threading
+    from bot_listener import start_bot_thread
+    thread = threading.Thread(target=start_bot_thread, daemon=True)
+    thread.start()
+    return "ACTIVE"
+
+bot_status = initialize_interactive_bot()
+
 # 2.1 إعداد شريط جانبي لأدوات التحكم والاختبار
 st.sidebar.markdown("### 🛠️ أدوات التحكم والربط")
 st.sidebar.write("استخدم هذا الزر لإرسال تنبيه عينة والتأكد من نجاح اتصال بوت تيليجرام بجوالك في أي وقت:")
@@ -371,9 +382,19 @@ with t4:
                 st.info("⏳ لا توجد إعلانات جوهرية جديدة في الثواني الأخيرة.")
 
 with t5:
-    st.markdown("### 🏆 سجل صيد اليقين التراكمي")
-    st.info("مخصص لأرشفة ومحاكاة الصفقات الافتراضية عالية التأكيد لرصد معدل نمو المحفظة التراكمية.")
-    if st.session_state.paper_ledger:
-        st.dataframe(pd.DataFrame(st.session_state.paper_ledger), use_container_width=True)
+    st.markdown("### 🏆 سجل صيد اليقين التراكمي والمحفظة الافتراضية حياً")
+    st.info("مخصص لأرشفة وإدارة صفقات المحفظة الافتراضية التفاعلية حياً عبر أوامر تيليجرام بالعربية.")
+    
+    from database import QuantDatabase
+    db = QuantDatabase()
+    cash = db.get_cash()
+    portfolio = db.get_portfolio()
+    
+    st.write(f"💵 **السيولة النقدية الحالية في الخزنة الافتراضية:** `{cash:,.2f}$`")
+    
+    if portfolio:
+        df_port = pd.DataFrame(portfolio)
+        df_port.columns = ["رمز السهم", "الكمية المملكة", "متوسط سعر الدخول", "توقيت الدخول"]
+        st.dataframe(df_port, use_container_width=True, hide_index=True)
     else:
-        st.write("السجل فارغ حالياً. قم بإجراء الفحوصات لتسجيل البيانات عند مطابقة الصفقات.")
+        st.write("💼 المحفظة فارغة حالياً. أرسل أمراً للبوت مثل `شراء CLSK 10` للبدء!")
