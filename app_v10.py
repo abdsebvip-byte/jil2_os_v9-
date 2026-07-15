@@ -181,6 +181,16 @@ def run_session_pipeline(session_name):
                     if price <= 0.0 or price > 20.0 or change < 3.0 or change > 45.0:
                         continue
                         
+                    # تصفية إضافية لمنع عرض الأسهم الخاملة التي لا تتداول في الجلسات الممتدة
+                    if session_name == "PRE_MARKET":
+                        pre_chg = quote.get("preMarketChangePercent")
+                        if pre_chg is None or float(pre_chg) == 0.0:
+                            continue
+                    elif session_name == "AFTER_HOURS":
+                        post_chg = quote.get("postMarketChangePercent")
+                        if post_chg is None or float(post_chg) == 0.0:
+                            continue
+                        
                     anomaly_info = anomaly_map.get(sym, {"is_anomaly": False, "confidence_score": 1.0})
                     
                     opportunities.append({
