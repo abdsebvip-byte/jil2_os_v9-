@@ -180,57 +180,70 @@ class QuantBacktester:
                         if f_shares > 15000000.0: # فلوت منخفض
                             continue
 
-                        # تطبيق خوارزمية التجميع الصامت التاريخية
+                        # تطبيق خوارزمية التجميع الصامت التاريخية المحدثة
                         if strategy_type == "ACCUMULATION":
-                            ticker_df = stock_hist.tail(5)
+                            ticker_df = stock_hist.tail(10) # فحص تماسك 10 أيام
                             close_prev = ticker_df['close'].iloc[:-1]
                             max_p = close_prev.max()
                             min_p = close_prev.min()
                             mean_p = close_prev.mean()
                             
                             volatility = ((max_p - min_p) / mean_p) * 100
-                            is_consolidating = volatility <= 4.0
+                            is_consolidating = volatility <= 6.0 # تذبذب تجميع ضيق
                             
-                            avg_vol = ticker_df['volume'].iloc[:-1].mean()
-                            today_vol = ticker_df['volume'].iloc[-1]
-                            volume_multiplier = today_vol / avg_vol if avg_vol > 0 else 1.0
-                            is_vol_spike = volume_multiplier >= 4.0
+                            avg_vol_20 = stock_hist['volume'].tail(20).mean()
+                            today_vol = float(stock_hist['volume'].iloc[-1])
+                            volume_multiplier = today_vol / avg_vol_20 if avg_vol_20 > 0 else 1.0
+                            is_vol_spike = volume_multiplier >= 2.5 # زيادة حجم التداول التاريخية
                             
-                            change_target = abs((ticker_df['close'].iloc[-1] - ticker_df['close'].iloc[-2]) / ticker_df['close'].iloc[-2]) * 100
-                            is_price_stable = change_target <= 3.5
+                            pct_change = ((price_today - float(stock_hist['close'].iloc[-2])) / float(stock_hist['close'].iloc[-2])) * 100
+                            is_price_stable = abs(pct_change) <= 3.5 # استقرار السعر اليوم للتجميع الصامت
                             
                             if is_consolidating and is_vol_spike and is_price_stable:
                                 signals_today.append((sym, price_today))
                                 
-                        # تطبيق خوارزمية الاختراق واليقين التاريخية (مبسطة للشموع اليومية)
+                        # تطبيق خوارزمية الاختراق واليقين المحدثة (مع فلتر مقاومة الذيول المصيدة)
                         elif strategy_type == "BREAKOUT":
-                            # نتحقق من شروط الاختراق الأساسية لليقين:
-                            # 1. السعر أعلى من متوسط 20 يوم
-                            # 2. حجم التداول اليوم أعلى من متوسط 20 يوم بمعدل 2.0x فما فوق
-                            # 3. السعر صعد اليوم بأكثر من 4%
                             if len(stock_hist) < 21:
                                 continue
                             sma_20 = stock_hist['close'].tail(20).mean()
                             vol_avg_20 = stock_hist['volume'].tail(20).mean()
-                            price_today = float(stock_hist['close'].iloc[-1])
                             price_prev = float(stock_hist['close'].iloc[-2])
                             vol_today = float(stock_hist['volume'].iloc[-1])
                             
                             is_above_sma = price_today > sma_20
-                            is_vol_breakout = vol_today >= vol_avg_20 * 2.0
-                            is_price_surge = ((price_today - price_prev) / price_prev) * 100 >= 4.0
+                            is_vol_breakout = vol_today >= vol_avg_20 * 2.5 # اختراق حجم قوي
+                            pct_change = ((price_today - price_prev) / price_prev) * 100
+                            is_price_surge = pct_change >= 4.0 # صعود حقيقي
                             
-                            if is_above_sma and is_vol_breakout and is_price_surge:
+                            # فلتر الإغلاق قرب القمة للتخلص من شمعة الذيل العلوي الطويل (المصيدة البينية)
+                            high_today = float(stock_hist['high'].iloc[-1])
+                            low_today = float(stock_hist['low'].iloc[-1])
+                            range_today = high_today - low_today
+                            close_from_high = high_today - price_today
+                            is_close_near_high = (close_from_high <= range_today * 0.20) if range_today > 0 else False
+                            
+                            if is_above_sma and is_vol_breakout and is_price_surge and is_close_near_high:
                                 signals_today.append((sym, price_today))
                     except:
                         continue
 
             # ج. تنفيذ الدخول في الصفقات الجديدة
-            # نقسم الكاش المتاح للفرع بالتساوي بين عدد الصفقات المتاحة
+            # نقسم القيمة الكلية الحالية للمحفظة بالتساوي للحصول على حجم صفقة موحد
             if signals_today and available_slots > 0:
-                # نأخذ أفضل الفرص بناء على حجم السيولة اليوم
                 signals_today = signals_today[:available_slots]
-                allocation_per_trade = current_capital / max_simultaneous_positions
+                
+                # حساب القيمة الإجمالية للمحفظة لإعادة الاستثمار الكامل
+                portfolio_value = current_capital
+                for pos in active_positions:
+                    sym_pos = pos["symbol"]
+                    try:
+                        current_price = float(df_hist.loc[sym_pos].loc[current_date]["close"])
+                    except:
+                        current_price = pos["entry_price"]
+                    portfolio_value += (current_price * pos["qty"])
+                
+                allocation_per_trade = portfolio_value / max_simultaneous_positions
                 
                 for sym, price in signals_today:
                     if current_capital >= allocation_per_trade:
