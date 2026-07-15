@@ -75,11 +75,11 @@ class TelegramBotListener:
         }
         
         if show_keyboard:
-            # لوحة المفاتيح التفاعلية الدائمة بأسفل الشاشة
+            # لوحة المفاتيح التفاعلية الدائمة المحدثة بأربعة أزرار
             keyboard = {
                 "keyboard": [
                     [{"text": "💼 عرض المحفظة"}, {"text": "⚡ تصفية السوق"}],
-                    [{"text": "📖 دليل الأوامر"}]
+                    [{"text": "🔍 تجميع صامت"}, {"text": "📖 دليل الأوامر"}]
                 ],
                 "resize_keyboard": True,
                 "one_time_keyboard": False
@@ -245,7 +245,29 @@ class TelegramBotListener:
             )
             self.send_message(msg)
 
-        # 5. أمر مسح السوق وتصفية الفرص
+        # 5. أمر مسح التجميع الصامت
+        elif "تجميع" in text or "تجميع صامت" in text or "🔍 تجميع صامت" in text:
+            self.send_message("🔬 جاري فحص السوق ورصد التجميع الصامت والـ Float المنخفض...")
+            try:
+                from accumulation import SilentAccumulationScanner
+                accum_scanner = SilentAccumulationScanner()
+                setups = accum_scanner.scan_for_accumulation()
+                
+                if not setups:
+                    self.send_message("⚠️ لم يتم رصد أي أسهم تمر بمرحلة تجميع صامت مطابقة للشروط حالياً.")
+                    return
+                    
+                msg = "🔍 *فرص التجميع الصامت المكتشفة حالياً*:\n\n"
+                for idx, item in enumerate(setups):
+                    msg += (
+                        f"{idx+1}. *{item['Symbol']}* | السعر: `${item['Price']:.2f}`\n"
+                        f"📊 *التوجيه الفني الكامل:*\n{item['Guidance']}\n\n"
+                    )
+                self.send_message(msg)
+            except Exception as e:
+                self.send_message(f"❌ حدث خطأ أثناء فحص التجميع الصامت: {str(e)}")
+
+        # 6. أمر مسح السوق وتصفية الفرص الفورية
         elif "تصفية" in text or "فحص" in text:
             self.send_message("🔬 جاري مسح السوق وتصفية أفضل الفرص السبعة حالياً بالـ ML...")
             try:
@@ -287,7 +309,7 @@ class TelegramBotListener:
             except Exception as e:
                 self.send_message(f"❌ حدث خطأ أثناء فحص السوق: {str(e)}")
 
-        # 6. دليل المساعدة والتعليمات الافتراضي
+        # 7. دليل المساعدة والتعليمات الافتراضي
         elif "دليل" in text or "تعليمات" in text or "مساعدة" in text:
             help_text = (
                 "👋 *مرحباً بك يا أبو فيصل في مساعد التداول التفاعلي!*\n\n"
@@ -301,21 +323,21 @@ class TelegramBotListener:
                 "💼 *عرض المحفظة الافتراضية والسيولة النقدية:*\n"
                 "👈 اضغط على زر: *عرض المحفظة* بالأسفل\n\n"
                 "⚡ *مسح السوق وتصفية أفضل 5 فرص صعود:*\n"
-                "👈 اضغط على زر: *تصفية السوق* بالأسفل"
+                "👈 اضغط على زر: *تصفية السوق* بالأسفل\n\n"
+                "🔍 *رصد أسهم التجميع الصامت المنخفضة الفلوت:*\n"
+                "👈 اضغط على زر: *تجميع صامت* بالأسفل"
             )
             self.send_message(help_text)
 
-        # 7. التحدث الحر عبر Gemini AI (إذا كانت المفاتيح مفعلة)
+        # 8. التحدث الحر عبر Gemini AI (إذا كانت المفاتيح مفعلة)
         else:
             if self.gemini_key:
-                # نرسل السؤال لمحرك الذكاء الاصطناعي للاستشارة الذكية الحرة
                 reply = self.call_gemini_advisor(text)
                 if reply:
                     self.send_message(reply)
                 else:
                     self.send_message("⚠️ لم يتمكن خادم المستشار من الرد حالياً.")
             else:
-                # إذا لم يكن هناك مفتاح للذكاء الاصطناعي، نعرض دليل المساعدة الافتراضي
                 self.process_message("دليل")
 
     def start_polling(self):
@@ -338,7 +360,6 @@ class TelegramBotListener:
                             message = update.get("message", {})
                             chat = message.get("chat", {})
                             
-                            # نتأكد أن المرسل هو أبو فيصل فقط لحماية الحساب
                             if str(chat.get("id")) == str(self.chat_id):
                                 text = message.get("text")
                                 if text:

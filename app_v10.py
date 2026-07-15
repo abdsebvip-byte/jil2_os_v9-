@@ -398,3 +398,40 @@ with t5:
         st.dataframe(df_port, use_container_width=True, hide_index=True)
     else:
         st.write("💼 المحفظة فارغة حالياً. أرسل أمراً للبوت مثل `شراء CLSK 10` للبدء!")
+
+    st.write("---")
+    st.markdown("### 🔍 رادار التجميع الحجمي الصامت (Pre-Breakout Scanner)")
+    st.write("يبحث هذا الرادار عن الأسهم ذات الفلوت المنخفض (<15M) التي تشهد طفرات حجم ضخمة (>4x) مع ثبات تام في السعر، لالتقاط الحركة قبل حدوث الانفجار السعري.")
+    
+    run_accum = st.button("⚡ تفعيل فحص التجميع الصامت", key="run_silent_accum")
+    if run_accum:
+        with st.spinner("جاري مسح السوق تاريخياً وحساب تجميع السيولة..."):
+            from accumulation import SilentAccumulationScanner
+            accum_scanner = SilentAccumulationScanner()
+            setups = accum_scanner.scan_for_accumulation()
+            
+            if setups:
+                st.success(f"🎉 تم رصد {len(setups)} أسهم تمر بمرحلة تجميع صامت عالية اليقين!")
+                
+                # عرض جدول الفرص
+                df_setups = pd.DataFrame(setups)
+                df_table = df_setups[["Symbol", "Price", "Volume_Multiplier", "Volatility", "Float_M", "Expected_Gain_%", "Expected_Days", "Stop_Loss"]].copy()
+                df_table.columns = ["رمز السهم", "السعر", "تضاعف الحجم", "التذبذب اليومي", "الأسهم الحرة (Float M)", "الهدف المتوقع", "الانتظار المتوقع (يوم)", "وقف الخسارة"]
+                
+                # تنسيق الأرقام
+                df_table["تضاعف الحجم"] = df_table["تضاعف الحجم"].apply(lambda x: f"{x:.1f}x")
+                df_table["التذبذب اليومي"] = df_table["التذبذب اليومي"].apply(lambda x: f"{x:.2f}%")
+                df_table["الأسهم الحرة (Float M)"] = df_table["الأسهم الحرة (Float M)"].apply(lambda x: f"{x:.2f}M")
+                df_table["الهدف المتوقع"] = df_table["الهدف المتوقع"].apply(lambda x: f"+{x:.1f}%")
+                df_table["الانتظار المتوقع (يوم)"] = df_table["الانتظار المتوقع (يوم)"].apply(lambda x: f"{x} أيام")
+                df_table["وقف الخسارة"] = df_table["وقف الخسارة"].apply(lambda x: f"${x:.2f}")
+                
+                st.dataframe(df_table, use_container_width=True, hide_index=True)
+                
+                # عرض كروت النصائح والتوجيهات الحقيقية
+                st.write("#### 💡 التوجيه الفني والتحليل الاستشاري للذكاء الاصطناعي:")
+                for item in setups:
+                    with st.expander(f"🏢 التوجيه الفني الكامل لـ {item['Symbol']}"):
+                        st.markdown(f'<div class="ai-section"><h4>🎯 تحليل سهم {item["Symbol"]}</h4><p style="font-size:16px;line-height:1.6;color:#ffffff !important;">{item["Guidance"]}</p></div>', unsafe_allow_html=True)
+            else:
+                st.info("⏳ لم يتم رصد أي أسهم تمر بمرحلة تجميع صامت ومطابقة للشروط الصارمة حالياً.")
