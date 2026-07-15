@@ -1,7 +1,7 @@
 # module: bot_listener.py
 import time
 import requests
-import threading
+import json
 from yahooquery import Ticker
 from database import QuantDatabase
 from scanner import FreeMarketScanner
@@ -14,6 +14,7 @@ class TelegramBotListener:
         self.intel = QuantIntelligence()
         self.token = None
         self.chat_id = None
+        self.gemini_key = None
         self.offset = 0
         self.load_credentials()
 
@@ -24,6 +25,7 @@ class TelegramBotListener:
             if "TELEGRAM_BOT_TOKEN" in st.secrets:
                 self.token = st.secrets["TELEGRAM_BOT_TOKEN"]
                 self.chat_id = st.secrets["TELEGRAM_CHAT_ID"]
+                self.gemini_key = st.secrets.get("GEMINI_API_KEY")
                 return
         except:
             pass
@@ -41,6 +43,8 @@ class TelegramBotListener:
                                 self.token = val
                             elif key == "TELEGRAM_CHAT_ID":
                                 self.chat_id = val
+                            elif key == "GEMINI_API_KEY":
+                                self.gemini_key = val
 
     def get_live_price(self, symbol):
         symbol = symbol.upper().strip()
@@ -49,7 +53,6 @@ class TelegramBotListener:
             price_info = t.price.get(symbol, {})
             price = price_info.get("regularMarketPrice", 0.0)
             
-            # مواءمة السعر مع الجلسة الحالية
             sess = self.scanner.get_current_market_session()
             if sess == "PRE_MARKET" and price_info.get("preMarketPrice"):
                 price = price_info.get("preMarketPrice")
@@ -60,19 +63,65 @@ class TelegramBotListener:
         except:
             return 0.0
 
-    def send_message(self, text):
+    def send_message(self, text, show_keyboard=True):
         if not self.token or not self.chat_id:
             return
+        
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
         payload = {
             "chat_id": self.chat_id,
             "text": text,
             "parse_mode": "Markdown"
         }
+        
+        if show_keyboard:
+            # لوحة المفاتيح التفاعلية الدائمة بأسفل الشاشة
+            keyboard = {
+                "keyboard": [
+                    [{"text": "💼 عرض المحفظة"}, {"text": "⚡ تصفية السوق"}],
+                    [{"text": "📖 دليل الأوامر"}]
+                ],
+                "resize_keyboard": True,
+                "one_time_keyboard": False
+            }
+            payload["reply_markup"] = keyboard
+
         try:
             requests.post(url, json=payload, timeout=8)
         except Exception as e:
             print(f"BotListener: send_message failed: {str(e)}")
+
+    def call_gemini_advisor(self, user_message):
+        """
+        Calls Gemini API dynamically to provide free-form conversational advice in Arabic.
+        """
+        if not self.gemini_key:
+            return None
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.gemini_key}"
+        headers = {"Content-Type": "application/json"}
+        
+        system_instruction = (
+            "أنت مساعد تداول خوارزمي كمي وخبير مالي ذكي وخاص بأبو فيصل. تجيب باللغة العربية بأسلوب احترافي وجاف ومباشر ومبني على التحليل الكمي والرياضيات الميكروية لحركة الأسعار والسيولة. "
+            "المنصة الحالية مبنية على استراتيجية الفحص بسبع طبقات يقين مع خوارزمية Isolation Forest لرصد الشذوذ الحجمي. "
+            "لا تعطي وعوداً مالية مبالغ فيها ولا تشجع على الطمع أو الـ FOMO. ركز على إدارة المخاطر ومعدلات النجاح الإحصائية."
+        )
+
+        payload = {
+            "contents": [{"parts": [{"text": user_message}]}],
+            "systemInstruction": {"parts": [{"text": system_instruction}]}
+        }
+
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                reply = data['candidates'][0]['content']['parts'][0]['text']
+                return reply
+            else:
+                return f"⚠️ خادم الذكاء الاصطناعي استجاب برمز خطأ: {response.status_code}"
+        except Exception as e:
+            return f"⚠️ تعذر الاتصال بمحرك الاستشارات الذكي: {str(e)}"
 
     def process_message(self, text):
         text = text.strip()
@@ -92,11 +141,9 @@ class TelegramBotListener:
                 return
                 
             try:
-                # محاكاة البيانات لإعطاء النتيجة للطبقات السبعة
                 t = Ticker(symbol)
                 q = t.price.get(symbol, {})
                 
-                # تجميع البيانات بتنسيق متوافق
                 formatted_quote = {
                     "symbol": symbol,
                     "regularMarketPrice": q.get("regularMarketPrice", 0.0),
@@ -116,7 +163,6 @@ class TelegramBotListener:
                 }
                 
                 sess = self.scanner.get_current_market_session()
-                # حساب نقاط اليقين
                 score, details, prc, chg, rvol = self.intel.calculate_7_layer_conviction(formatted_quote, sess, {})
                 
                 match_text = "\n".join([f"{'✅' if v else '❌'} {k}" for k, v in details.items()])
@@ -161,7 +207,7 @@ class TelegramBotListener:
                 self.send_message("⚠️ صيغة الكمية غير صحيحة. مثال: `بيع CLSK 10`")
 
         # 4. أمر عرض المحفظة الافتراضية
-        elif command in ["محفظة", "المحفظة"]:
+        elif text in ["محفظة", "المحفظة", "💼 عرض المحفظة"]:
             portfolio = self.db.get_portfolio()
             cash = self.db.get_cash()
             if not portfolio:
@@ -200,7 +246,7 @@ class TelegramBotListener:
             self.send_message(msg)
 
         # 5. أمر مسح السوق وتصفية الفرص
-        elif command in ["تصفية", "فحص"]:
+        elif text in ["تصفية", "فحص", "⚡ تصفية السوق"]:
             self.send_message("🔬 جاري مسح السوق وتصفية أفضل الفرص السبعة حالياً بالـ ML...")
             try:
                 symbols = self.scanner.fetch_all_us_symbols()
@@ -242,7 +288,7 @@ class TelegramBotListener:
                 self.send_message(f"❌ حدث خطأ أثناء فحص السوق: {str(e)}")
 
         # 6. دليل المساعدة والتعليمات الافتراضي
-        else:
+        elif text in ["دليل", "تعليمات", "📖 دليل الأوامر"]:
             help_text = (
                 "👋 *مرحباً بك يا أبو فيصل في مساعد التداول التفاعلي!*\n\n"
                 "إليك الأوامر المتاحة باللغة العربية للتحكم في رادارك:\n\n"
@@ -253,11 +299,24 @@ class TelegramBotListener:
                 "💰 *تنفيذ صفقات بيع افتراضية:*\n"
                 "👈 اكتب: `بيع [رمز السهم] [الكمية]` (مثال: `بيع CLSK 50`)\n\n"
                 "💼 *عرض المحفظة الافتراضية والسيولة النقدية:*\n"
-                "👈 اكتب: `محفظة`\n\n"
+                "👈 اضغط على زر: *عرض المحفظة* بالأسفل\n\n"
                 "⚡ *مسح السوق وتصفية أفضل 5 فرص صعود:*\n"
-                "👈 اكتب: `تصفية`"
+                "👈 اضغط على زر: *تصفية السوق* بالأسفل"
             )
             self.send_message(help_text)
+
+        # 7. التحدث الحر عبر Gemini AI (إذا كانت المفاتيح مفعلة)
+        else:
+            if self.gemini_key:
+                # نرسل السؤال لمحرك الذكاء الاصطناعي للاستشارة الذكية الحرة
+                reply = self.call_gemini_advisor(text)
+                if reply:
+                    self.send_message(reply)
+                else:
+                    self.send_message("⚠️ لم يتمكن خادم المستشار من الرد حالياً.")
+            else:
+                # إذا لم يكن هناك مفتاح للذكاء الاصطناعي، نعرض دليل المساعدة الافتراضي
+                self.process_message("📖 دليل الأوامر")
 
     def start_polling(self):
         print("BotListener: Start polling for Telegram updates...")
