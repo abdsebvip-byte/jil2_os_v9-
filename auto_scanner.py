@@ -6,9 +6,7 @@ import pytz
 from scanner import FreeMarketScanner
 from intelligence import QuantIntelligence
 from notifier import TelegramNotifier
-
-# قاموس لتتبع الأسهم التي تم إرسال تنبيهات لها لمنع التكرار المزعج (صلاحية التنبيه 3 ساعات)
-sent_alerts = {}
+from database import QuantDatabase
 
 def start_scheduler():
     """
@@ -19,6 +17,7 @@ def start_scheduler():
     scanner = FreeMarketScanner()
     intel = QuantIntelligence()
     notifier = TelegramNotifier()
+    db = QuantDatabase()
     
     # تهيئة نفق الاستدعاء غير المتزامن داخل الخيط المنفصل
     loop = asyncio.new_event_loop()
@@ -75,13 +74,9 @@ def start_scheduler():
                     
                     # نرسل التنبيه فقط إذا كانت مطابقة الخوارزمية ممتازة ومؤشر الثقة مرتفع
                     if score >= 80 and anomaly_info["confidence_score"] >= 5.0:
-                        now = datetime.now()
-                        
-                        # منع تكرار إرسال التنبيه لنفس السهم خلال 3 ساعات
-                        if sym in sent_alerts:
-                            last_sent = sent_alerts[sym]
-                            if now - last_sent < timedelta(hours=3):
-                                continue
+                        # منع تكرار إرسال التنبيه لنفس السهم خلال 3 ساعات عبر قاعدة البيانات
+                        if db.check_alert_sent_recently(sym, hours=3):
+                            continue
                                 
                         # إرسال التنبيه مباشرة إلى هاتف أبو فيصل عبر تيليجرام
                         success = notifier.send_breakout_alert(
@@ -93,7 +88,7 @@ def start_scheduler():
                             confidence=anomaly_info["confidence_score"]
                         )
                         if success:
-                            sent_alerts[sym] = now
+                            db.log_sent_alert(sym)
                             
                 except Exception as e:
                     print(f"Background Scanner: Error processing symbol: {str(e)}")

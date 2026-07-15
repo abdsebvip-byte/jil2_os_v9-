@@ -1,6 +1,6 @@
 # module: database.py
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 class QuantDatabase:
     def __init__(self, db_path="quant_platform.db"):
@@ -41,6 +41,14 @@ class QuantDatabase:
                 CREATE TABLE IF NOT EXISTS account_balance (
                     id INTEGER PRIMARY KEY,
                     cash REAL NOT NULL
+                )
+            """)
+            
+            # جدول منع تكرار الإشعارات والتنبيهات
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sent_alerts (
+                    symbol TEXT PRIMARY KEY,
+                    sent_at TEXT NOT NULL
                 )
             """)
             
@@ -156,3 +164,30 @@ class QuantDatabase:
                     "entry_time": r[3]
                 })
             return portfolio_list
+
+    def check_alert_sent_recently(self, symbol, hours=3):
+        symbol = symbol.upper().strip()
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT sent_at FROM sent_alerts WHERE symbol = ?", (symbol,))
+            row = cursor.fetchone()
+            if not row:
+                return False
+            
+            try:
+                sent_time = datetime.fromisoformat(row[0])
+                if datetime.now() - sent_time < timedelta(hours=hours):
+                    return True
+            except:
+                pass
+            return False
+
+    def log_sent_alert(self, symbol):
+        symbol = symbol.upper().strip()
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO sent_alerts (symbol, sent_at)
+                VALUES (?, ?)
+            """, (symbol, datetime.now().isoformat()))
+            conn.commit()
