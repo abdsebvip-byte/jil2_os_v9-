@@ -1,6 +1,8 @@
 # module: accumulation.py
 import pandas as pd
 import numpy as np
+from datetime import datetime
+import pytz
 from yahooquery import Ticker
 from scanner import FreeMarketScanner
 
@@ -23,7 +25,6 @@ class SilentAccumulationScanner:
         print(f"SilentAccumulation: Fetching statistics for {len(all_symbols)} symbols...")
         ticker_batch = Ticker(all_symbols)
         
-        # جلب البيانات المالية والإحصائية
         try:
             stats = ticker_batch.key_stats
             price_details = ticker_batch.price
@@ -38,7 +39,6 @@ class SilentAccumulationScanner:
 
         for sym in all_symbols:
             try:
-                # التحقق من وجود السعر في القاموس
                 p_info = price_details.get(sym)
                 if not isinstance(p_info, dict):
                     continue
@@ -71,7 +71,6 @@ class SilentAccumulationScanner:
 
         print(f"SilentAccumulation: {len(valid_symbols)} symbols passed initial filters. Querying 14-day history...")
         
-        # 4. جلب البيانات التاريخية لـ 14 يوماً للأسهم المتبقية
         try:
             hist_batch = Ticker(valid_symbols)
             df_hist = hist_batch.history(period="14d")
@@ -84,44 +83,59 @@ class SilentAccumulationScanner:
 
         setups = []
         
+        # كشف التوقيت الشرقي لمزامنة نضوج الشموع اليومية
+        est_tz = pytz.timezone('US/Eastern')
+        now_est = datetime.now(est_tz)
+        today_str = now_est.strftime("%Y-%m-%d")
+        
         # 5. تحليل النماذج السعرية والحجمية لكل سهم بشكل فردي
         for sym in valid_symbols:
             try:
                 if sym not in df_hist.index.levels[0]:
                     continue
                 
-                ticker_df = df_hist.loc[sym].tail(5)  # نأخذ آخر 5 أيام تداول
+                full_ticker_df = df_hist.loc[sym]
+                if len(full_ticker_df) < 6:
+                    continue
+                
+                # استبعاد شمعة اليوم الحالي إذا كنا قبل إغلاق السوق (الساعة 4:00 مساءً بتوقيت نيويورك)
+                # لأن حجم التداول لليوم الحالي لم يكتمل بعد وسيعطي قراءة مغلوطة (صفراً أو قليلاً جداً)
+                last_row_date = str(full_ticker_df.index[-1]).split()[0]
+                if last_row_date == today_str and now_est.hour < 16:
+                    ticker_df = full_ticker_df.iloc[:-1].tail(5)
+                else:
+                    ticker_df = full_ticker_df.tail(5)
+                    
                 if len(ticker_df) < 5:
                     continue
                 
-                # حساب النطاق السعري لآخر 4 أيام (التجميع والاستقرار)
-                close_prices = ticker_df['close'].iloc[:-1]  # أول 4 أيام باستثناء اليوم الأخير
+                # حساب النطاق السعري لآخر 4 أيام (التجميع واستقرار السعر السابق)
+                close_prices = ticker_df['close'].iloc[:-1]  # أول 4 أيام باستثناء اليوم الأخير المستهدف
                 max_p = close_prices.max()
                 min_p = close_prices.min()
                 mean_p = close_prices.mean()
                 
-                # حساب معدل التذبذب (هل السعر يتحرك في قناة ضيقة أقل من 3.5%؟)
+                # حساب معدل التذبذب (هل السعر يتحرك في قناة ضيقة أقل من 4%؟)
                 volatility = ((max_p - min_p) / mean_p) * 100
-                is_consolidating = volatility <= 3.5
+                is_consolidating = volatility <= 4.0
                 
-                # حساب حجم التداول اليوم الأخير مقارنة بمتوسط الـ 4 أيام السابقة
+                # حساب حجم التداول لليوم الأخير المكتمل مقارنة بمتوسط الـ 4 أيام السابقة له
                 avg_volume_prev = ticker_df['volume'].iloc[:-1].mean()
-                today_volume = ticker_df['volume'].iloc[-1]
+                target_volume = ticker_df['volume'].iloc[-1]
                 
-                # حجم التداول تضاعف بمعدل 4.0x فما فوق
-                volume_multiplier = today_volume / avg_volume_prev if avg_volume_prev > 0 else 1.0
+                # حجم التداول تضاعف بمعدل 4.0x فما فوق لليوم المستهدف
+                volume_multiplier = target_volume / avg_volume_prev if avg_volume_prev > 0 else 1.0
                 is_volume_spike = volume_multiplier >= 4.0
                 
-                # السعر اليوم لم يتغير عن الأمس بأكثر من 3% (حركة حجم بدون حركة سعر)
-                price_change_today = abs((ticker_df['close'].iloc[-1] - ticker_df['close'].iloc[-2]) / ticker_df['close'].iloc[-2]) * 100
-                is_price_stable = price_change_today <= 3.0
+                # سعر اليوم المستهدف لم يتغير عن اليوم الذي قبله بأكثر من 3.5% (تراكم سيولة بدون حركة سعرية حادة)
+                price_change_target = abs((ticker_df['close'].iloc[-1] - ticker_df['close'].iloc[-2]) / ticker_df['close'].iloc[-2]) * 100
+                is_price_stable = price_change_target <= 3.5
                 
                 if is_consolidating and is_volume_spike and is_price_stable:
                     # حساب الـ ATR لآخر 14 يوماً لتقدير مدى الانفجار ووقف الخسارة
-                    full_df = df_hist.loc[sym]
-                    high_low = full_df['high'] - full_df['low']
-                    high_close = abs(full_df['high'] - full_df['close'].shift())
-                    low_close = abs(full_df['low'] - full_df['close'].shift())
+                    high_low = full_ticker_df['high'] - full_ticker_df['low']
+                    high_close = abs(full_ticker_df['high'] - full_ticker_df['close'].shift())
+                    low_close = abs(full_ticker_df['low'] - full_ticker_df['close'].shift())
                     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
                     atr = tr.tail(14).mean()
                     
@@ -129,11 +143,9 @@ class SilentAccumulationScanner:
                     float_m = symbol_float_map[sym] / 1000000.0  # تحويل بالمليون
                     
                     # 6. التقديرات الرقمية الحقيقية (خالية من التزييف)
-                    # النسبة المتوقعة للانفجار تحسب بناءً على ATR التاريخي مقارنة بالسعر الحالي
                     expected_gain_percent = (3.0 * atr / price) * 100 if price > 0 else 0.0
                     
-                    # المدى الزمني المتوقع للانفجار يحسب بناءً على مؤشر ضغط البولينجر (قناة التذبذب)
-                    # كلما كانت قناة التذبذب أضيق، كان الاختراق أقرب زمنياً
+                    # المدى الزمني المتوقع للانفجار يحسب بناءً على ضيق التذبذب
                     expected_days = 2 + int(volatility * 1.5)
                     expected_days = min(max(expected_days, 2), 7)  # حصر النطاق بين 2 إلى 7 أيام عمل
                     
@@ -142,7 +154,7 @@ class SilentAccumulationScanner:
                     # 7. صياغة التوجيه الاستشاري الديناميكي الحقيقي
                     guidance = (
                         f"سهم {sym} يمر بمرحلة تجميع صامت قوي. "
-                        f"حجم التداول تضاعف بمعدل {volume_multiplier:.1f} أضعاف مع استقرار السعر التام بنطاق تذبذب {volatility:.2f}% فقط. "
+                        f"حجم التداول تضاعف بمعدل {volume_multiplier:.1f} أضعاف مع استقرار السعر بنطاق تذبذب {volatility:.2f}% فقط. "
                         f"حجم الأسهم الحرة المتداولة للشركة صغير جداً ويقدر بـ {float_m:.2f} مليون سهم مما يجعله سريع الاستجابة للسيولة. "
                         f"التوجيه الفني للذكاء الاصطناعي: السهم مؤهل للشراء والاحتفاظ الاستراتيجي المؤقت لمدة {expected_days} أيام عمل ترقباً للاختراق الفعلي. "
                         f"نقطة إيقاف الخسارة الصارمة لحماية رأس مالك توضع عند سعر {stop_loss:.2f}$."
