@@ -35,6 +35,12 @@ class QuantBacktester:
         if df_hist is None or df_hist.empty:
             return {"error": "البيانات التاريخية المسترجعة فارغة."}
 
+        # توحيد نوع التواريخ في الفهرس لتفادي أخطاء مقارنة الأنواع المختلفة من التواريخ (mixed types)
+        try:
+            df_hist.index = df_hist.index.set_levels(pd.to_datetime(df_hist.index.levels[1]), level=1)
+        except Exception as e:
+            print(f"Backtester: Date alignment warning: {str(e)}")
+
         # 3. استخلاص الفلوت لكل سهم لتطبيقه في تصفية الأسهم الحرة
         print("Backtester: Fetching float details...")
         float_map = {}
@@ -54,7 +60,7 @@ class QuantBacktester:
         available_symbols = df_hist.index.levels[0]
         
         # استخراج جميع التواريخ الفريدة المتاحة في البيانات وجدولة نطاق الاختبار الفعلي
-        all_dates = sorted(df_hist.index.levels[1])
+        all_dates = sorted(list(set(df_hist.index.levels[1])))
         if len(all_dates) < 25:
             return {"error": "البيانات التاريخية المتاحة غير كافية لإجراء الاختبار."}
             
