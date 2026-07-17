@@ -51,8 +51,10 @@ def start_scheduler():
                             f"⏱️ *حالة السعر:* متجمد حالياً.\n"
                             f"💡 *التوجيه:* راقب السعر وتأهب لصفقة الاختراق فور استئناف التداول!"
                         )
-                        notifier.send_custom_message(alert_text)
-                        notified_halts.add(sym)
+                        success = notifier.send_custom_message(alert_text)
+                        if success:
+                            notified_halts.add(sym)
+                            db.log_alert_history(sym, 0.0, 100.0, f"إيقاف تداول ({reason})")
                         
                 # Check for resumption
                 resumed_syms = []
@@ -62,8 +64,10 @@ def start_scheduler():
                             f"🟢 *استئناف التداول: عاد سهم {sym} للعمل الآن!* 🟢\n\n"
                             f"📈 راقب حركة شمعة الدقيقة الأولى لتأكيد اتجاه السيولة."
                         )
-                        notifier.send_custom_message(res_text)
-                        resumed_syms.append(sym)
+                        success = notifier.send_custom_message(res_text)
+                        if success:
+                            resumed_syms.append(sym)
+                            db.log_alert_history(sym, 0.0, 100.0, "استئناف التداول")
                 for sym in resumed_syms:
                     notified_halts.remove(sym)
             except Exception as e:
@@ -147,6 +151,7 @@ def start_scheduler():
                             success = notifier.send_custom_message(alert_msg)
                             if success:
                                 db.log_sent_alert(sym)
+                                db.log_alert_history(sym, price, score, "شراء فوري بسعر السوق (رادار)")
                                 
                     except Exception as e:
                         logging.warning(f"Background Scanner Symbol Processing Error for {sym}: {e}")

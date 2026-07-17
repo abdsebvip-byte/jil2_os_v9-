@@ -52,6 +52,18 @@ class QuantDatabase:
                 )
             """)
             
+            # جدول أرشيف التنبيهات التاريخية للتداول
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS alerts_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    sent_at TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    score REAL NOT NULL,
+                    alert_type TEXT NOT NULL
+                )
+            """)
+            
             # تهيئة الرصيد الافتراضي بـ 1000 دولار إذا لم يكن موجوداً
             cursor.execute("SELECT COUNT(*) FROM account_balance")
             if cursor.fetchone()[0] == 0:
@@ -191,3 +203,32 @@ class QuantDatabase:
                 VALUES (?, ?)
             """, (symbol, datetime.now().isoformat()))
             conn.commit()
+
+    def log_alert_history(self, symbol, price, score, alert_type):
+        symbol = symbol.upper().strip()
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO alerts_history (symbol, sent_at, price, score, alert_type)
+                VALUES (?, ?, ?, ?, ?)
+            """, (symbol, datetime.now().isoformat(), float(price), float(score), str(alert_type)))
+            conn.commit()
+
+    def get_alerts_history(self, limit=50):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT symbol, sent_at, price, score, alert_type 
+                FROM alerts_history 
+                ORDER BY sent_at DESC 
+                LIMIT ?
+            """, (limit,))
+            rows = cursor.fetchall()
+            return [{
+                "symbol": r[0],
+                "sent_at": r[1],
+                "price": r[2],
+                "score": r[3],
+                "alert_type": r[4]
+            } for r in rows]
+

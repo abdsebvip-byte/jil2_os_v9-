@@ -497,6 +497,9 @@ def run_session_pipeline(session_name):
                         confidence=top_stock['Confidence_Score']
                     )
                     if success:
+                        from database import QuantDatabase
+                        db_log = QuantDatabase()
+                        db_log.log_alert_history(top_stock['Symbol'], top_stock['Price'], top_stock['Conviction_Score'], "شراء فوري بسعر السوق (طلب يدوي)")
                         st.success("✅ تم إرسال إشارة التنبيه بنجاح إلى هاتفك عبر تيليجرام!")
                     else:
                         st.error("❌ فشل إرسال التنبيه. يرجى التحقق من صحة المفاتيح في config.env أو Streamlit Secrets.")
@@ -640,6 +643,33 @@ with t5:
         st.dataframe(df_port, use_container_width=True, hide_index=True)
     else:
         st.write("💼 المحفظة فارغة حالياً. أرسل أمراً للبوت مثل `شراء CLSK 10` للبدء!")
+
+    st.write("---")
+    st.markdown("### 📢 أرشيف التنبيهات التاريخية الصادرة (Alerts History Log)")
+    st.write("يعرض هذا الجدول جميع الإشارات والتنبيهات التي تم إطلاقها تلقائياً بالخلفية أو يدوياً خلال الجلسة الحالية.")
+    
+    alerts_hist = db.get_alerts_history(limit=50)
+    if alerts_hist:
+        df_alerts = pd.DataFrame(alerts_hist)
+        df_alerts_display = df_alerts.copy()
+        
+        def format_time(ts_str):
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(ts_str)
+                return dt.strftime("%Y-%m-%d %H:%M:%S")
+            except:
+                return ts_str
+                
+        df_alerts_display["sent_at"] = df_alerts_display["sent_at"].apply(format_time)
+        df_alerts_display["price"] = df_alerts_display["price"].apply(lambda x: f"${x:.4f}" if x > 0 else "متجمد 🚨")
+        df_alerts_display["score"] = df_alerts_display["score"].apply(lambda x: f"{x:.1f}%" if x <= 100 else f"{x}%")
+        
+        df_alerts_display = df_alerts_display[["symbol", "sent_at", "price", "score", "alert_type"]]
+        df_alerts_display.columns = ["رمز السهم", "وقت التنبيه", "سعر التنبيه", "نسبة التطابق/اليقين", "نوع التنبيه"]
+        st.dataframe(df_alerts_display, use_container_width=True, hide_index=True)
+    else:
+        st.info("ℹ️ لم يتم إصدار أي تنبيهات أو إشارات تداول خلال الجلسة الحالية حتى الآن.")
 
     st.write("---")
     st.markdown("### 🔍 رادار التجميع الحجمي الصامت (Pre-Breakout Scanner)")
