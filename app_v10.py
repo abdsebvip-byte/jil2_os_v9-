@@ -261,9 +261,13 @@ if active_halts:
     for sym in halt_symbols:
         reason = active_halts[sym]
         price = 5.0
+        change = 0.0
         try:
             if sym in prices_data and isinstance(prices_data[sym], dict):
                 price = float(prices_data[sym].get("regularMarketPrice") or 5.0)
+                change_val = prices_data[sym].get("regularMarketChangePercent")
+                if change_val is not None:
+                    change = float(change_val) * 100.0
         except:
             price = 5.0
             
@@ -275,9 +279,10 @@ if active_halts:
             "short_percent": 0.0
         })
         
+        # Calculate ML probability using the actual change percent of the halted symbol
         ml_prob = ml_classifier.predict_probability(
             price=price,
-            change=0.0,
+            change=change,
             rvol=f_info["prev_rvol"],
             volatility_10d=f_info["volatility_10d"],
             prev_rvol=f_info["prev_rvol"],
@@ -285,6 +290,15 @@ if active_halts:
             float_shares_m=f_info["float_shares_m"],
             short_percent=f_info["short_percent"]
         )
+        
+        # Always calculate suggested trade parameters so the user is never left with dashed values
+        entry_price_val = price * 1.01
+        target_price_val = price * 1.12
+        stop_price_val = price * 0.95
+        
+        entry_str = f"${entry_price_val:.2f} (عند الاستئناف)"
+        target_str = f"${target_price_val:.2f} (+12%)"
+        stop_str = f"${stop_price_val:.2f} (-5%)"
         
         # Optimize: ONLY query SEC filings news if ML probability is promising (>= 60.0%) to prevent freezes
         is_dilution = False
@@ -296,19 +310,10 @@ if active_halts:
             
         if is_dilution:
             decision = "🔴 تجنب (🚨 تخفيف S-1)"
-            entry_str = "---"
-            target_str = "---"
-            stop_str = "---"
         elif ml_prob >= 65.0:
             decision = "🟢 شراء عاجل"
-            entry_str = f"${price * 1.01:.2f} (عند الاستئناف)"
-            target_str = f"${price * 1.12:.2f} (+12%)"
-            stop_str = f"${price * 0.95:.2f} (-5%)"
         else:
             decision = "🔴 تجنب (مخاطرة عالية/ضعف السيولة)"
-            entry_str = "---"
-            target_str = "---"
-            stop_str = "---"
             
         halts_data.append({
             "رمز السهم": sym,
