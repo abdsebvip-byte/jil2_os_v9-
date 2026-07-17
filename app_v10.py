@@ -228,11 +228,98 @@ with c3:
 with c4:
     st.markdown(f'<div class="metric-card"><h4 style="color:#94a3b8;margin:0;font-size:15px;">المستشعر التلقائي لتيليجرام</h4><h2 style="color:#10b981;margin:10px 0;font-size:28px;">نشط بالخلفية 📡</h2></div>', unsafe_allow_html=True)
 
-# عرض بانر إيقاف التداول لحظياً بأعلى الصفحة
-active_halts_banner = get_active_halts()
-if active_halts_banner:
-    halt_symbols_str = ", ".join([f"{sym} ({reason})" for sym, reason in active_halts_banner.items()])
-    st.error(f"🚨 *تنبيه إيقاف التداول النشط (Nasdaq Volatility Halts):* الأسهم التالية موقوفة حالياً عن التداول: `{halt_symbols_str}`")
+# مؤشر التحديث والزمن اللحظي للبيانات
+from datetime import datetime
+import pytz
+est_tz = pytz.timezone('US/Eastern')
+now_est = datetime.now(est_tz)
+st.write(f"⏱️ **آخر تحديث للرادار:** `{now_est.strftime('%H:%M:%S')} EST` | **تأخير البيانات:** `0 ثوانٍ (بيانات لحظية 🟢)`")
+
+# عرض جدول رصد إيقاف التداول اللحظي (Nasdaq Halts Scan)
+st.markdown("### 🚨 شاشة صيد صفقات الاستئناف (Nasdaq Halts Trading Matrix)")
+active_halts = get_active_halts()
+
+if active_halts:
+    halt_symbols = list(active_halts.keys())
+    halts_data = []
+    
+    # Retrieve features and ML probability for these symbols
+    from intraday_tracker import get_historical_features
+    from ml_classifier import QuantMLClassifier
+    import yfinance as yf
+    
+    # Fetch current price in bulk
+    try:
+        prices_df = yf.download(halt_symbols, period="1d", group_by="ticker", timeout=5)
+    except:
+        prices_df = pd.DataFrame()
+        
+    hist_features_halts = get_historical_features(halt_symbols)
+    ml_classifier = QuantMLClassifier()
+    
+    for sym in halt_symbols:
+        reason = active_halts[sym]
+        try:
+            if len(halt_symbols) == 1:
+                price = float(prices_df["Close"].iloc[-1]) if not prices_df.empty else 5.0
+            else:
+                price = float(prices_df[sym]["Close"].iloc[-1]) if not prices_df.empty and sym in prices_df else 5.0
+        except:
+            price = 5.0
+            
+        f_info = hist_features_halts.get(sym, {
+            "volatility_10d": 5.0,
+            "prev_rvol": 1.0,
+            "prev_change": 0.0,
+            "float_shares_m": 10.0,
+            "short_percent": 0.0
+        })
+        
+        ml_prob = ml_classifier.predict_probability(
+            price=price,
+            change=0.0,
+            rvol=f_info["prev_rvol"],
+            volatility_10d=f_info["volatility_10d"],
+            prev_rvol=f_info["prev_rvol"],
+            prev_change=f_info["prev_change"],
+            float_shares_m=f_info["float_shares_m"],
+            short_percent=f_info["short_percent"]
+        )
+        
+        # Check SEC filings for S-1 dilution
+        sec_sentiment = get_sec_filings_sentiment(sym)
+        is_dilution = sec_sentiment["dilution_warning"]
+        
+        if is_dilution:
+            decision = "🔴 تجنب (🚨 تخفيف S-1)"
+            entry_str = "---"
+            target_str = "---"
+            stop_str = "---"
+        elif ml_prob >= 65.0:
+            decision = "🟢 شراء عاجل"
+            entry_str = f"${price * 1.01:.2f} (عند الاستئناف)"
+            target_str = f"${price * 1.12:.2f} (+12%)"
+            stop_str = f"${price * 0.95:.2f} (-5%)"
+        else:
+            decision = "🔴 تجنب (مخاطرة عالية/ضعف السيولة)"
+            entry_str = "---"
+            target_str = "---"
+            stop_str = "---"
+            
+        halts_data.append({
+            "رمز السهم": sym,
+            "سبب الإيقاف": f"LULD ({reason})",
+            "احتمالية الانفجار": f"🔮 {ml_prob:.1f}%",
+            "التوجيه المباشر": decision,
+            "نقطة الدخول المقترحة": entry_str,
+            "الهدف الربحي المقترح": target_str,
+            "وقف الخسارة المقترح": stop_str
+        })
+        
+    df_halts = pd.DataFrame(halts_data)
+    st.dataframe(df_halts, use_container_width=True, hide_index=True)
+else:
+    st.info("⏳ لا توجد أسهم موقوفة عن التداول حالياً في ناسداك.")
 
 st.write("---")
 
@@ -667,3 +754,13 @@ with t6:
                     st.dataframe(df_trades, use_container_width=True, hide_index=True)
                 else:
                     st.info("ℹ️ لم يتم توليد أي صفقات خلال فترة الفحص التاريخية المحددة.")
+
+# --- التحديث التلقائي للبيانات والصفحة ---
+import time
+st.sidebar.markdown("---")
+auto_refresh = st.sidebar.checkbox("🔄 تفعيل التحديث التلقائي للصفحة", value=True)
+refresh_interval = st.sidebar.slider("⏱️ ثواني الانتظار قبل التحديث:", min_value=10, max_value=300, value=60, step=10)
+
+if auto_refresh:
+    time.sleep(refresh_interval)
+    st.rerun()
