@@ -246,24 +246,24 @@ if active_halts:
     # Retrieve features and ML probability for these symbols
     from intraday_tracker import get_historical_features
     from ml_classifier import QuantMLClassifier
-    import yfinance as yf
+    from yahooquery import Ticker
     
-    # Fetch current price in bulk
+    # Fetch current price in bulk (blazing fast, no progress bar, no timeout hangs)
     try:
-        prices_df = yf.download(halt_symbols, period="1d", group_by="ticker", timeout=5)
+        tickers = Ticker(halt_symbols)
+        prices_data = tickers.price
     except:
-        prices_df = pd.DataFrame()
+        prices_data = {}
         
     hist_features_halts = get_historical_features(halt_symbols)
     ml_classifier = QuantMLClassifier()
     
     for sym in halt_symbols:
         reason = active_halts[sym]
+        price = 5.0
         try:
-            if len(halt_symbols) == 1:
-                price = float(prices_df["Close"].iloc[-1]) if not prices_df.empty else 5.0
-            else:
-                price = float(prices_df[sym]["Close"].iloc[-1]) if not prices_df.empty and sym in prices_df else 5.0
+            if sym in prices_data and isinstance(prices_data[sym], dict):
+                price = float(prices_data[sym].get("regularMarketPrice") or 5.0)
         except:
             price = 5.0
             
@@ -286,10 +286,14 @@ if active_halts:
             short_percent=f_info["short_percent"]
         )
         
-        # Check SEC filings for S-1 dilution
-        sec_sentiment = get_sec_filings_sentiment(sym)
-        is_dilution = sec_sentiment["dilution_warning"]
-        
+        # Optimize: ONLY query SEC filings news if ML probability is promising (>= 60.0%) to prevent freezes
+        is_dilution = False
+        sec_tags = "لا يوجد"
+        if ml_prob >= 60.0:
+            sec_sentiment = get_sec_filings_sentiment(sym)
+            is_dilution = sec_sentiment["dilution_warning"]
+            sec_tags = ", ".join(sec_sentiment["details"]) if sec_sentiment["details"] else "لا يوجد"
+            
         if is_dilution:
             decision = "🔴 تجنب (🚨 تخفيف S-1)"
             entry_str = "---"
@@ -414,10 +418,15 @@ def run_session_pipeline(session_name):
                     is_halted = sym in active_halts
                     halt_reason = active_halts[sym] if is_halted else ""
                     
-                    # فحص الإيداعات والتخفيف والملكية القانونية عبر SEC
-                    sec_sentiment = get_sec_filings_sentiment(sym)
-                    sec_tags = ", ".join(sec_sentiment["details"]) if sec_sentiment["details"] else "لا يوجد"
-                    is_dilution = sec_sentiment["dilution_warning"]
+                    # فحص الإيداعات والتخفيف والملكية القانونية عبر SEC فقط للأسهم المرشحة لتفادي بطء الاستدعاء
+                    is_candidate = (score >= 80) or (price <= 10.0 and change >= 4.0 and rvol >= 2.5)
+                    sec_tags = "لا يوجد"
+                    is_dilution = False
+                    if is_candidate:
+                        sec_sentiment = get_sec_filings_sentiment(sym)
+                        sec_tags = ", ".join(sec_sentiment["details"]) if sec_sentiment["details"] else "لا يوجد"
+                        is_dilution = sec_sentiment["dilution_warning"]
+                    
                     
                     opportunities.append({
                         "Symbol": sym,
