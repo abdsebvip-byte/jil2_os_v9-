@@ -95,59 +95,112 @@ class QuantBacktester:
 
                 entry_p = pos["entry_price"]
                 qty = pos["qty"]
+                strat = pos["strategy"]
                 
-                # شرط الخروج 1: تحقيق جني الأرباح المستهدف (>= 50% من سعر الدخول)
-                if high_t >= entry_p * 1.50:
-                    exit_price = entry_p * 1.50
-                    pnl = (exit_price - entry_p) * qty
-                    current_capital += (exit_price * qty)
-                    trades.append({
-                        "Symbol": sym,
-                        "Type": pos["strategy"],
-                        "Entry_Date": pos["entry_date"],
-                        "Exit_Date": current_date_str,
-                        "Entry_Price": entry_p,
-                        "Exit_Price": exit_price,
-                        "PnL_$": pnl,
-                        "PnL_%": 50.0,
-                        "Result": "WIN (TP 50%)"
-                    })
-                # شرط الخروج 2: تفعيل وقف الخسارة لحماية رأس المال (<= -15%)
-                elif low_t <= entry_p * 0.85:
-                    exit_price = entry_p * 0.85
-                    pnl = (exit_price - entry_p) * qty
-                    current_capital += (exit_price * qty)
-                    trades.append({
-                        "Symbol": sym,
-                        "Type": pos["strategy"],
-                        "Entry_Date": pos["entry_date"],
-                        "Exit_Date": current_date_str,
-                        "Entry_Price": entry_p,
-                        "Exit_Price": exit_price,
-                        "PnL_$": pnl,
-                        "PnL_%": -15.0,
-                        "Result": "LOSS (SL 15%)"
-                    })
-                # شرط الخروج 3: انتهاء المدة القصوى للاحتفاظ (10 أيام تداول)
-                elif pos["days_held"] >= 9: # اليوم العاشر
-                    exit_price = close_t
-                    pnl = (exit_price - entry_p) * qty
-                    current_capital += (exit_price * qty)
-                    pnl_pct = ((exit_price - entry_p) / entry_p) * 100
-                    trades.append({
-                        "Symbol": sym,
-                        "Type": pos["strategy"],
-                        "Entry_Date": pos["entry_date"],
-                        "Exit_Date": current_date_str,
-                        "Entry_Price": entry_p,
-                        "Exit_Price": exit_price,
-                        "PnL_$": pnl,
-                        "PnL_%": pnl_pct,
-                        "Result": f"HOLD EXPIRED ({'WIN' if pnl >= 0 else 'LOSS'})"
-                    })
+                # أ. قوانين خروج صفقات المضاربة اللحظية السريعة (تصفية نفس اليوم)
+                if strat == "INTRADAY_SCALPING":
+                    if high_t >= entry_p * 1.15:
+                        exit_price = entry_p * 1.15
+                        pnl = (exit_price - entry_p) * qty
+                        current_capital += (exit_price * qty)
+                        trades.append({
+                            "Symbol": sym,
+                            "Type": strat,
+                            "Entry_Date": pos["entry_date"],
+                            "Exit_Date": current_date_str,
+                            "Entry_Price": entry_p,
+                            "Exit_Price": exit_price,
+                            "PnL_$": pnl,
+                            "PnL_%": 15.0,
+                            "Result": "WIN (TP 15% Intraday)"
+                        })
+                    elif low_t <= entry_p * 0.93:
+                        exit_price = entry_p * 0.93
+                        pnl = (exit_price - entry_p) * qty
+                        current_capital += (exit_price * qty)
+                        trades.append({
+                            "Symbol": sym,
+                            "Type": strat,
+                            "Entry_Date": pos["entry_date"],
+                            "Exit_Date": current_date_str,
+                            "Entry_Price": entry_p,
+                            "Exit_Price": exit_price,
+                            "PnL_$": pnl,
+                            "PnL_%": -7.0,
+                            "Result": "LOSS (SL 7% Intraday)"
+                        })
+                    else:
+                        # إغلاق إجباري نهاية اليوم لمنع المخاطرة الليلية
+                        exit_price = close_t
+                        pnl = (exit_price - entry_p) * qty
+                        current_capital += (exit_price * qty)
+                        pnl_pct = ((exit_price - entry_p) / entry_p) * 100
+                        trades.append({
+                            "Symbol": sym,
+                            "Type": strat,
+                            "Entry_Date": pos["entry_date"],
+                            "Exit_Date": current_date_str,
+                            "Entry_Price": entry_p,
+                            "Exit_Price": exit_price,
+                            "PnL_$": pnl,
+                            "PnL_%": pnl_pct,
+                            "Result": f"CLOSE EXPIRED ({'WIN' if pnl >= 0 else 'LOSS'})"
+                        })
+                
+                # ب. قوانين صفقات سوينغ الاختراقات والتجميع (تحتاج لعدة أيام)
                 else:
-                    pos["days_held"] += 1
-                    still_active.append(pos)
+                    # شرط الخروج 1: تحقيق جني الأرباح المستهدف (>= 50% من سعر الدخول)
+                    if high_t >= entry_p * 1.50:
+                        exit_price = entry_p * 1.50
+                        pnl = (exit_price - entry_p) * qty
+                        current_capital += (exit_price * qty)
+                        trades.append({
+                            "Symbol": sym,
+                            "Type": strat,
+                            "Entry_Date": pos["entry_date"],
+                            "Exit_Date": current_date_str,
+                            "Entry_Price": entry_p,
+                            "Exit_Price": exit_price,
+                            "PnL_$": pnl,
+                            "PnL_%": 50.0,
+                            "Result": "WIN (TP 50%)"
+                        })
+                    # شرط الخروج 2: تفعيل وقف الخسارة لحماية رأس المال (<= -15%)
+                    elif low_t <= entry_p * 0.85:
+                        exit_price = entry_p * 0.85
+                        pnl = (exit_price - entry_p) * qty
+                        current_capital += (exit_price * qty)
+                        trades.append({
+                            "Symbol": sym,
+                            "Type": strat,
+                            "Entry_Date": pos["entry_date"],
+                            "Exit_Date": current_date_str,
+                            "Entry_Price": entry_p,
+                            "Exit_Price": exit_price,
+                            "PnL_$": pnl,
+                            "PnL_%": -15.0,
+                            "Result": "LOSS (SL 15%)"
+                        })
+                    # شرط الخروج 3: انتهاء المدة القصوى للاحتفاظ (10 أيام تداول)
+                    elif pos["days_held"] >= 9: # اليوم العاشر
+                        exit_price = close_t
+                        pnl = (exit_price - entry_p) * qty
+                        current_capital += (exit_price * qty)
+                        pnl_pct = ((exit_price - entry_p) / entry_p) * 100
+                        trades.append({
+                            "Symbol": sym,
+                            "Type": strat,
+                            "Entry_Date": pos["entry_date"],
+                            "Exit_Date": current_date_str,
+                            "Entry_Price": entry_p,
+                            "Exit_Price": exit_price,
+                            "PnL_$": pnl,
+                            "PnL_%": pnl_pct,
+                            "Result": f"HOLD EXPIRED ({'WIN' if pnl >= 0 else 'LOSS'})"
+                        })
+                    else:
+                        pos["days_held"] += 1
+                        still_active.append(pos)
             
             active_positions = still_active
 
@@ -203,7 +256,7 @@ class QuantBacktester:
                                 signals_today.append((sym, price_today))
                                 
                         # تطبيق خوارزمية الاختراق واليقين المحدثة (مع فلتر مقاومة الذيول المصيدة)
-                        elif strategy_type == "BREAKOUT":
+                        elif strategy_type in ["BREAKOUT", "INTRADAY_SCALPING"]:
                             if len(stock_hist) < 21:
                                 continue
                             sma_20 = stock_hist['close'].tail(20).mean()

@@ -329,17 +329,50 @@ def run_session_pipeline(session_name):
                         else:
                             st.error(f"❌ {name}\n\n({val})")
                 
-                # --- القسم الثالث: مصفوفة الفحص الشاملة المرتبة ---
+                # --- القسم الثالث: تقسيم الجداول لحماية رأس المال ---
                 st.write("---")
-                st.write("### 📊 مصفوفة الفحص الشاملة المرتبة تناسقياً:")
-                df_all_display = df_opportunities.copy()
-                df_all_display["تطابق الخوارزمية"] = df_all_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%" if x >= 80 else f"⚡ {x}%")
-                df_all_display["مؤشر الثقة"] = df_all_display["Confidence_Score"].apply(lambda x: f"⭐ {x}/10")
-                df_all_display["حالة الشذوذ"] = df_all_display["Is_Anomaly"].apply(lambda x: "🚨 نعم" if x else "لا")
                 
-                df_table = df_all_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الشذوذ", "مؤشر الثقة", "تطابق الخوارزمية"]].copy()
-                df_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "انحراف حجمي حاد", "مؤشر الثقة (ML)", "تطابق الخوارزمية"]
-                st.dataframe(df_table, use_container_width=True, hide_index=True)
+                # أ. أسهم المضاربة اللحظية السريعة (Intraday Scalping Radar)
+                st.markdown("### 🔥 رادار المضاربة اللحظية السريعة (Intraday Scalping - Target +15% / Stop -7% / Exit Today)")
+                st.write("أسهم رخيصة تحت 10$ تشهد اختراقاً حركياً وحجمياً قوياً اليوم، وتستهدف الخروج السريع في نفس اليوم لحماية رأس المال.")
+                
+                df_scalp = df_opportunities[
+                    (df_opportunities["Price"] >= 0.1) & 
+                    (df_opportunities["Price"] <= 10.0) & 
+                    (df_opportunities["Change_%"] >= 4.0) & 
+                    (df_opportunities["RVOL"] >= 2.5)
+                ].copy()
+                
+                if not df_scalp.empty:
+                    df_scalp_display = df_scalp.copy()
+                    df_scalp_display["تطابق الخوارزمية"] = df_scalp_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%" if x >= 80 else f"⚡ {x}%")
+                    df_scalp_display["مؤشر الثقة"] = df_scalp_display["Confidence_Score"].apply(lambda x: f"⭐ {x}/10")
+                    df_scalp_display["حالة الشذوذ"] = df_scalp_display["Is_Anomaly"].apply(lambda x: "🚨 نعم" if x else "لا")
+                    
+                    df_scalp_table = df_scalp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الشذوذ", "مؤشر الثقة", "تطابق الخوارزمية"]].copy()
+                    df_scalp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "انحراف حجمي حاد", "مؤشر الثقة (ML)", "تطابق الخوارزمية"]
+                    st.dataframe(df_scalp_table, use_container_width=True, hide_index=True)
+                else:
+                    st.info("ℹ️ لا توجد حالياً أسهم مطابقة لشروط المضاربة اللحظية السريعة اليوم.")
+                
+                st.write("---")
+                
+                # ب. الأسهم الانفجارية الحقيقية طويلة المدى (Explosive Swing Breakouts)
+                st.markdown("### 🚀 رادار الاختراق واليقين طويل المدى (Explosive Swing Breakouts - Target +50%)")
+                st.write("أسهم عالية اليقين مطابقة للطبقات السبعة لليقين، تستهدف الاحتفاظ لعدة أيام عمل لتحقيق انفجارات سعرية كبرى تصل لـ 50% فما فوق.")
+                
+                df_swings = df_opportunities[df_opportunities["Conviction_Score"] >= 80].copy()
+                if not df_swings.empty:
+                    df_swings_display = df_swings.copy()
+                    df_swings_display["تطابق الخوارزمية"] = df_swings_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%" if x >= 80 else f"⚡ {x}%")
+                    df_swings_display["مؤشر الثقة"] = df_swings_display["Confidence_Score"].apply(lambda x: f"⭐ {x}/10")
+                    df_swings_display["حالة الشذوذ"] = df_swings_display["Is_Anomaly"].apply(lambda x: "🚨 نعم" if x else "لا")
+                    
+                    df_swings_table = df_swings_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الشذوذ", "مؤشر الثقة", "تطابق الخوارزمية"]].copy()
+                    df_swings_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "انحراف حجمي حاد", "مؤشر الثقة (ML)", "تطابق الخوارزمية"]
+                    st.dataframe(df_swings_table, use_container_width=True, hide_index=True)
+                else:
+                    st.info("ℹ️ لا توجد حالياً أسهم مطابقة لطبقات اليقين السبعة لصفقات السوينغ اليوم.")
                 
             else:
                 st.warning("⚠️ لا توجد حالياً أسهم رخيصة تحقق شروط الانفجار الصارمة ومؤشرات الشذوذ في هذه الجلسة.")
@@ -446,8 +479,8 @@ with t6:
     with col_strat:
         strategy_choice = st.selectbox(
             "اختر الاستراتيجية للتحليل التاريخي:", 
-            ["ACCUMULATION", "BREAKOUT"], 
-            format_func=lambda x: "🏆 التجميع الصامت (Consolidation & Float)" if x == "ACCUMULATION" else "⚡ الاختراقات واليقين (Volume & SMA Breakout)"
+            ["ACCUMULATION", "BREAKOUT", "INTRADAY_SCALPING"], 
+            format_func=lambda x: "🏆 التجميع الصامت (Consolidation & Float)" if x == "ACCUMULATION" else ("⚡ الاختراقات واليقين (Volume & SMA Breakout)" if x == "BREAKOUT" else "🔥 المضاربة اللحظية السريعة (Intraday Scalping)")
         )
     with col_cap:
         initial_cap = st.number_input("رأس المال الافتراضي للبدء ($):", min_value=100.0, value=1000.0, step=100.0)
