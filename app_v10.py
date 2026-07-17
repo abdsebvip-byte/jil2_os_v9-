@@ -198,9 +198,16 @@ t1, t2, t3, t4, t5, t6 = st.tabs([
 def run_session_pipeline(session_name):
     st.markdown(f"🔬 **حالة المعالجة الحالية:** جاري مسح وتصفية سيولة جلسة `{session_name}`...")
     
-    with st.spinner("جاري استخلاص البيانات وتدريب نموذج Isolation Forest لرصد شذوذ الحركة الحجمية..."):
+    with st.spinner("جاري استخلاص البيانات وتدريب نموذج Isolation Forest ورصد شذوذ الحركة الحجمية..."):
         symbols = scanner.fetch_all_us_symbols()
         if symbols:
+            # 1. جلب مؤشرات التعلم الآلي التاريخية ونموذج التنبؤ
+            from intraday_tracker import get_historical_features
+            from ml_classifier import QuantMLClassifier
+            
+            hist_features = get_historical_features(symbols)
+            ml_classifier = QuantMLClassifier()
+            
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             raw_data = loop.run_until_complete(scanner.scan_entire_market())
@@ -209,16 +216,20 @@ def run_session_pipeline(session_name):
                 st.warning("⚠️ لم يتم استلام أي بيانات أسعار حالياً من ياهو فاينانس.")
                 return
             
-            # 1. تشغيل Isolation Forest لرصد الشذوذ
+            # 2. تشغيل Isolation Forest لرصد الشذوذ
             anomaly_map = intel.fit_anomaly_detector(raw_data, session_name)
             
-            # 2. تصفية وفرز البيانات
+            # 3. تصفية وفرز البيانات
             opportunities = []
             for quote in raw_data:
                 try:
                     score, details, price, change, rvol = intel.calculate_7_layer_conviction(quote, session_name, anomaly_map)
                     sym = quote.get("symbol")
                     
+                    # استبعاد شذوذ التقسيم وأسهم SPACs والخيارات والوحدات الوهمية (أطول من 4 أحرف أو تنتهي بـ U, W, R)
+                    if len(sym) > 4 or sym.endswith(("U", "W", "R")):
+                        continue
+                        
                     if price <= 0.0 or price > 20.0 or change < 3.0 or change > 45.0:
                         continue
                         
@@ -234,6 +245,17 @@ def run_session_pipeline(session_name):
                         
                     anomaly_info = anomaly_map.get(sym, {"is_anomaly": False, "confidence_score": 1.0})
                     
+                    # حساب احتمالية الانفجار عبر نموذج التعلم الآلي
+                    f_info = hist_features.get(sym, {"volatility_10d": 5.0, "prev_rvol": 1.0, "prev_change": 0.0})
+                    ml_prob = ml_classifier.predict_probability(
+                        price=price,
+                        change=change,
+                        rvol=rvol,
+                        volatility_10d=f_info["volatility_10d"],
+                        prev_rvol=f_info["prev_rvol"],
+                        prev_change=f_info["prev_change"]
+                    )
+                    
                     opportunities.append({
                         "Symbol": sym,
                         "Price": price,
@@ -243,9 +265,11 @@ def run_session_pipeline(session_name):
                         "Conviction_Score": score,
                         "Is_Anomaly": anomaly_info["is_anomaly"],
                         "Confidence_Score": anomaly_info["confidence_score"],
+                        "ML_Probability": ml_prob,
                         "Matches": details
                     })
                 except Exception as e:
+                    continue
                     continue
             
             df_opportunities = pd.DataFrame(opportunities)
@@ -344,13 +368,17 @@ def run_session_pipeline(session_name):
                 ].copy()
                 
                 if not df_scalp.empty:
+                    # ترتيب جدول المضاربة اللحظية حسب احتمالية الانفجار التنبؤية للذكاء الاصطناعي
+                    df_scalp = df_scalp.sort_values(by="ML_Probability", ascending=False)
+                    
                     df_scalp_display = df_scalp.copy()
                     df_scalp_display["تطابق الخوارزمية"] = df_scalp_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%" if x >= 80 else f"⚡ {x}%")
                     df_scalp_display["مؤشر الثقة"] = df_scalp_display["Confidence_Score"].apply(lambda x: f"⭐ {x}/10")
                     df_scalp_display["حالة الشذوذ"] = df_scalp_display["Is_Anomaly"].apply(lambda x: "🚨 نعم" if x else "لا")
+                    df_scalp_display["احتمالية الانفجار (ML)"] = df_scalp_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
                     
-                    df_scalp_table = df_scalp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الشذوذ", "مؤشر الثقة", "تطابق الخوارزمية"]].copy()
-                    df_scalp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "انحراف حجمي حاد", "مؤشر الثقة (ML)", "تطابق الخوارزمية"]
+                    df_scalp_table = df_scalp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الشذوذ", "مؤشر الثقة", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
+                    df_scalp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "انحراف حجمي حاد", "مؤشر الثقة (ML)", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
                     st.dataframe(df_scalp_table, use_container_width=True, hide_index=True)
                 else:
                     st.info("ℹ️ لا توجد حالياً أسهم مطابقة لشروط المضاربة اللحظية السريعة اليوم.")
@@ -363,13 +391,17 @@ def run_session_pipeline(session_name):
                 
                 df_swings = df_opportunities[df_opportunities["Conviction_Score"] >= 80].copy()
                 if not df_swings.empty:
+                    # ترتيب الاختراقات طويلة المدى حسب احتمالية الانفجار
+                    df_swings = df_swings.sort_values(by="ML_Probability", ascending=False)
+                    
                     df_swings_display = df_swings.copy()
                     df_swings_display["تطابق الخوارزمية"] = df_swings_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%" if x >= 80 else f"⚡ {x}%")
                     df_swings_display["مؤشر الثقة"] = df_swings_display["Confidence_Score"].apply(lambda x: f"⭐ {x}/10")
                     df_swings_display["حالة الشذوذ"] = df_swings_display["Is_Anomaly"].apply(lambda x: "🚨 نعم" if x else "لا")
+                    df_swings_display["احتمالية الانفجار (ML)"] = df_swings_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
                     
-                    df_swings_table = df_swings_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الشذوذ", "مؤشر الثقة", "تطابق الخوارزمية"]].copy()
-                    df_swings_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "انحراف حجمي حاد", "مؤشر الثقة (ML)", "تطابق الخوارزمية"]
+                    df_swings_table = df_swings_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الشذوذ", "مؤشر الثقة", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
+                    df_swings_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "انحراف حجمي حاد", "مؤشر الثقة (ML)", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
                     st.dataframe(df_swings_table, use_container_width=True, hide_index=True)
                 else:
                     st.info("ℹ️ لا توجد حالياً أسهم مطابقة لطبقات اليقين السبعة لصفقات السوينغ اليوم.")
