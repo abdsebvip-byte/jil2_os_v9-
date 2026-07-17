@@ -2,10 +2,33 @@
 import streamlit as st
 import pandas as pd
 import asyncio
+import logging
+import requests
 from scanner import FreeMarketScanner
 from intelligence import QuantIntelligence
 from news_radar import SECNewsRadar
 from notifier import TelegramNotifier
+
+# إعداد ملف مراقبة الأخطاء المركزي (Centralized Error Logging)
+logging.basicConfig(
+    filename="radar_errors.log",
+    level=logging.WARNING,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+def fetch_stocktwits_trending():
+    """
+    سحب قائمة الأسهم الأكثر تداولاً وجدلاً حالياً من Stocktwits (Trending Symbols)
+    """
+    try:
+        url = "https://api.stocktwits.com/api/2/trending/symbols.json"
+        res = requests.get(url, timeout=5)
+        if res.status_code == 200:
+            symbols = [item["symbol"] for item in res.json().get("symbols", [])]
+            return set(symbols)
+    except Exception as e:
+        logging.warning(f"Stocktwits API Error: {e}")
+    return set()
 
 # 1. إعداد الصفحة والأنماط البصرية الراقية (Premium Dark Tech Theme)
 st.set_page_config(page_title="منظومة رادار السيولة التراكمية v10.0", layout="wide")
@@ -208,6 +231,9 @@ def run_session_pipeline(session_name):
             hist_features = get_historical_features(symbols)
             ml_classifier = QuantMLClassifier()
             
+            # جلب قائمة الأسهم الأكثر شعبية على Stocktwits
+            stocktwits_trending = fetch_stocktwits_trending()
+            
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             raw_data = loop.run_until_complete(scanner.scan_entire_market())
@@ -256,6 +282,9 @@ def run_session_pipeline(session_name):
                         prev_change=f_info["prev_change"]
                     )
                     
+                    # التحقق من شعبية السهم على Stocktwits
+                    is_trending = sym in stocktwits_trending
+                    
                     opportunities.append({
                         "Symbol": sym,
                         "Price": price,
@@ -266,6 +295,7 @@ def run_session_pipeline(session_name):
                         "Is_Anomaly": anomaly_info["is_anomaly"],
                         "Confidence_Score": anomaly_info["confidence_score"],
                         "ML_Probability": ml_prob,
+                        "Is_Trending": is_trending,
                         "Matches": details
                     })
                 except Exception as e:
@@ -376,9 +406,10 @@ def run_session_pipeline(session_name):
                     df_scalp_display["مؤشر الثقة"] = df_scalp_display["Confidence_Score"].apply(lambda x: f"⭐ {x}/10")
                     df_scalp_display["حالة الشذوذ"] = df_scalp_display["Is_Anomaly"].apply(lambda x: "🚨 نعم" if x else "لا")
                     df_scalp_display["احتمالية الانفجار (ML)"] = df_scalp_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
+                    df_scalp_display["التريند العام"] = df_scalp_display["Is_Trending"].apply(lambda x: "🔥 رائج جداً" if x else "لا")
                     
-                    df_scalp_table = df_scalp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الشذوذ", "مؤشر الثقة", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
-                    df_scalp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "انحراف حجمي حاد", "مؤشر الثقة (ML)", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
+                    df_scalp_table = df_scalp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الشذوذ", "التريند العام", "مؤشر الثقة", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
+                    df_scalp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "انحراف حجمي حاد", "شعبية Stocktwits", "مؤشر الثقة (ML)", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
                     st.dataframe(df_scalp_table, use_container_width=True, hide_index=True)
                 else:
                     st.info("ℹ️ لا توجد حالياً أسهم مطابقة لشروط المضاربة اللحظية السريعة اليوم.")
@@ -399,9 +430,10 @@ def run_session_pipeline(session_name):
                     df_swings_display["مؤشر الثقة"] = df_swings_display["Confidence_Score"].apply(lambda x: f"⭐ {x}/10")
                     df_swings_display["حالة الشذوذ"] = df_swings_display["Is_Anomaly"].apply(lambda x: "🚨 نعم" if x else "لا")
                     df_swings_display["احتمالية الانفجار (ML)"] = df_swings_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
+                    df_swings_display["التريند العام"] = df_swings_display["Is_Trending"].apply(lambda x: "🔥 رائج جداً" if x else "لا")
                     
-                    df_swings_table = df_swings_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الشذوذ", "مؤشر الثقة", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
-                    df_swings_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "انحراف حجمي حاد", "مؤشر الثقة (ML)", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
+                    df_swings_table = df_swings_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الشذوذ", "التريند العام", "مؤشر الثقة", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
+                    df_swings_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "انحراف حجمي حاد", "شعبية Stocktwits", "مؤشر الثقة (ML)", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
                     st.dataframe(df_swings_table, use_container_width=True, hide_index=True)
                 else:
                     st.info("ℹ️ لا توجد حالياً أسهم مطابقة لطبقات اليقين السبعة لصفقات السوينغ اليوم.")

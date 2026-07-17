@@ -3,11 +3,11 @@ import os
 import pickle
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
 from yahooquery import Ticker
 from scanner import FreeMarketScanner
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "breakout_rf.pkl")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "breakout_xgb.pkl")
 
 class QuantMLClassifier:
     def __init__(self):
@@ -16,27 +16,27 @@ class QuantMLClassifier:
         
     def load_or_train(self):
         """
-        Load the pre-trained model if it exists, otherwise train a new one.
+        Load the pre-trained XGBoost model if it exists, otherwise train a new one.
         """
         if os.path.exists(MODEL_PATH):
             try:
                 with open(MODEL_PATH, "rb") as f:
                     self.model = pickle.load(f)
-                print("QuantMLClassifier: Model loaded successfully.")
+                print("QuantMLClassifier: XGBoost Model loaded successfully.")
                 return
             except Exception as e:
-                print(f"QuantMLClassifier: Failed to load model: {e}. Retraining...")
+                print(f"QuantMLClassifier: Failed to load XGBoost model: {e}. Retraining...")
                 
         self.train_model()
 
     def train_model(self):
         """
-        Train a Random Forest model on historical breakout data of active tickers.
+        Train an XGBoost Classifier model on historical breakout data of active tickers.
         """
-        print("QuantMLClassifier: Training new Random Forest Classifier...")
+        print("QuantMLClassifier: Training new XGBoost Classifier...")
         scanner = FreeMarketScanner()
         symbols = scanner.fetch_all_us_symbols()
-        # Limit to top 50 symbols for training speed and stability
+        # Limit to top 60 symbols for training speed and stability
         train_symbols = symbols[:60]
         
         tickers = Ticker(train_symbols)
@@ -104,17 +104,23 @@ class QuantMLClassifier:
         X = np.array(features_list)
         y = np.array(labels_list)
         
-        # Train Random Forest Classifier
-        rf = RandomForestClassifier(n_estimators=100, max_depth=8, random_state=42)
-        rf.fit(X, y)
+        # Train XGBoost Classifier
+        xgb = XGBClassifier(
+            n_estimators=100,
+            max_depth=6,
+            learning_rate=0.1,
+            random_state=42,
+            eval_metric='logloss'
+        )
+        xgb.fit(X, y)
         
-        self.model = rf
+        self.model = xgb
         
         # Save model to disk
         try:
             with open(MODEL_PATH, "wb") as f:
                 pickle.dump(self.model, f)
-            print(f"QuantMLClassifier: Model trained on {len(X)} samples and saved to {MODEL_PATH}")
+            print(f"QuantMLClassifier: XGBoost Model trained on {len(X)} samples and saved to {MODEL_PATH}")
         except Exception as e:
             print(f"QuantMLClassifier Warning: Could not save model to disk: {e}")
 
@@ -131,7 +137,7 @@ class QuantMLClassifier:
 
     def predict_probability(self, price, change, rvol, volatility_10d, prev_rvol, prev_change):
         """
-        Predict the probability of a breakout succeeding (0.0 to 100.0).
+        Predict the probability of a breakout succeeding (0.0 to 100.0) using XGBoost.
         """
         if self.model is None:
             return 50.0
@@ -145,7 +151,6 @@ class QuantMLClassifier:
                 float(prev_rvol),
                 float(prev_change)
             ]])
-            # predict_proba returns probability for [class 0, class 1]
             probs = self.model.predict_proba(features)[0]
             class_1_prob = float(probs[1]) * 100.0
             return round(class_1_prob, 1)
