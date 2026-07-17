@@ -8,6 +8,7 @@ from scanner import FreeMarketScanner
 from intelligence import QuantIntelligence
 from news_radar import SECNewsRadar
 from notifier import TelegramNotifier
+from alerts_tracker import get_active_halts, get_sec_filings_sentiment
 
 # إعداد ملف مراقبة الأخطاء المركزي (Centralized Error Logging)
 logging.basicConfig(
@@ -183,6 +184,27 @@ if st.sidebar.button("📢 إرسال إشارة تجريبية لتيليجرا
     else:
         st.sidebar.error("❌ فشل الإرسال، تحقق من الأسرار.")
 
+# 🧮 حاسبة حجم الصفقة وإدارة المخاطر (Position Sizing Calculator)
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🧮 حاسبة حجم الصفقة وإدارة المخاطر")
+account_val = st.sidebar.number_input("إجمالي رأس المال في حسابك ($):", min_value=10.0, value=st.session_state.accumulated_balance, step=100.0)
+risk_pct = st.sidebar.slider("حد المخاطرة الأقصى لكل صفقة (%):", min_value=1.0, max_value=20.0, value=10.0, step=1.0)
+entry_price = st.sidebar.number_input("سعر دخول السهم المتوقع ($):", min_value=0.01, value=5.00, step=0.1)
+
+max_loss_allowed = (account_val * risk_pct) / 100.0
+# Assuming stop loss is 7.0%
+stop_loss_pct = 7.0
+max_position_size = max_loss_allowed / (stop_loss_pct / 100.0)
+# Capital protection: Never allocate more than 25% of account to a single penny stock
+max_position_size = min(max_position_size, account_val * 0.25)
+shares_to_buy = max_position_size / entry_price
+
+st.sidebar.info(
+    f"💵 *مبلغ الشراء المقترح (الحد الأقصى):* `{max_position_size:.2f} $`\n\n"
+    f"📉 *أقصى خسارة مسموحة:* `{max_loss_allowed:.2f} $` (عند هبوط -7%)\n\n"
+    f"📦 *عدد الأسهم المقترح للشراء:* `{int(shares_to_buy)} سهم`"
+)
+
 # رصد الجلسة الزمنية الحالية
 current_session = scanner.get_current_market_session()
 session_translation = {
@@ -205,6 +227,12 @@ with c3:
     st.markdown(f'<div class="metric-card"><h4 style="color:#94a3b8;margin:0;font-size:15px;">حالة الجلسة الحالية</h4><h3 style="color:#f59e0b;margin:10px 0;font-size:18px;">{session_translation.get(current_session)}</h3></div>', unsafe_allow_html=True)
 with c4:
     st.markdown(f'<div class="metric-card"><h4 style="color:#94a3b8;margin:0;font-size:15px;">المستشعر التلقائي لتيليجرام</h4><h2 style="color:#10b981;margin:10px 0;font-size:28px;">نشط بالخلفية 📡</h2></div>', unsafe_allow_html=True)
+
+# عرض بانر إيقاف التداول لحظياً بأعلى الصفحة
+active_halts_banner = get_active_halts()
+if active_halts_banner:
+    halt_symbols_str = ", ".join([f"{sym} ({reason})" for sym, reason in active_halts_banner.items()])
+    st.error(f"🚨 *تنبيه إيقاف التداول النشط (Nasdaq Volatility Halts):* الأسهم التالية موقوفة حالياً عن التداول: `{halt_symbols_str}`")
 
 st.write("---")
 
@@ -245,7 +273,10 @@ def run_session_pipeline(session_name):
             # 2. تشغيل Isolation Forest لرصد الشذوذ
             anomaly_map = intel.fit_anomaly_detector(raw_data, session_name)
             
-            # 3. تصفية وفرز البيانات
+            # 3. جلب حالة الإيقاف المؤقت لجميع الأسهم دفعة واحدة
+            active_halts = get_active_halts()
+            
+            # تصفية وفرز البيانات
             opportunities = []
             for quote in raw_data:
                 try:
@@ -271,19 +302,35 @@ def run_session_pipeline(session_name):
                         
                     anomaly_info = anomaly_map.get(sym, {"is_anomaly": False, "confidence_score": 1.0})
                     
-                    # حساب احتمالية الانفجار عبر نموذج التعلم الآلي
-                    f_info = hist_features.get(sym, {"volatility_10d": 5.0, "prev_rvol": 1.0, "prev_change": 0.0})
+                    # حساب احتمالية الانفجار عبر نموذج التعلم الآلي المطور بـ 8 ميزات (مع الفلوت والبيع المكشوف)
+                    f_info = hist_features.get(sym, {
+                        "volatility_10d": 5.0, 
+                        "prev_rvol": 1.0, 
+                        "prev_change": 0.0,
+                        "float_shares_m": 10.0,
+                        "short_percent": 0.0
+                    })
+                    
                     ml_prob = ml_classifier.predict_probability(
                         price=price,
                         change=change,
                         rvol=rvol,
                         volatility_10d=f_info["volatility_10d"],
                         prev_rvol=f_info["prev_rvol"],
-                        prev_change=f_info["prev_change"]
+                        prev_change=f_info["prev_change"],
+                        float_shares_m=f_info["float_shares_m"],
+                        short_percent=f_info["short_percent"]
                     )
                     
-                    # التحقق من شعبية السهم على Stocktwits
+                    # التحقق من شعبية السهم على Stocktwits وحالة الإيقاف
                     is_trending = sym in stocktwits_trending
+                    is_halted = sym in active_halts
+                    halt_reason = active_halts[sym] if is_halted else ""
+                    
+                    # فحص الإيداعات والتخفيف والملكية القانونية عبر SEC
+                    sec_sentiment = get_sec_filings_sentiment(sym)
+                    sec_tags = ", ".join(sec_sentiment["details"]) if sec_sentiment["details"] else "لا يوجد"
+                    is_dilution = sec_sentiment["dilution_warning"]
                     
                     opportunities.append({
                         "Symbol": sym,
@@ -296,6 +343,10 @@ def run_session_pipeline(session_name):
                         "Confidence_Score": anomaly_info["confidence_score"],
                         "ML_Probability": ml_prob,
                         "Is_Trending": is_trending,
+                        "Is_Halted": is_halted,
+                        "Halt_Reason": halt_reason,
+                        "SEC_Tags": sec_tags,
+                        "Is_Dilution": is_dilution,
                         "Matches": details
                     })
                 except Exception as e:
@@ -407,9 +458,12 @@ def run_session_pipeline(session_name):
                     df_scalp_display["حالة الشذوذ"] = df_scalp_display["Is_Anomaly"].apply(lambda x: "🚨 نعم" if x else "لا")
                     df_scalp_display["احتمالية الانفجار (ML)"] = df_scalp_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
                     df_scalp_display["التريند العام"] = df_scalp_display["Is_Trending"].apply(lambda x: "🔥 رائج جداً" if x else "لا")
+                    df_scalp_display["حالة الإيقاف"] = df_scalp_display.apply(lambda r: f"🚨 موقوف ({r['Halt_Reason']})" if r["Is_Halted"] else "🟢 نشط", axis=1)
+                    df_scalp_display["إيداعات SEC"] = df_scalp_display["SEC_Tags"]
+                    df_scalp_display["تحذير التخفيف"] = df_scalp_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
                     
-                    df_scalp_table = df_scalp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الشذوذ", "التريند العام", "مؤشر الثقة", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
-                    df_scalp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "انحراف حجمي حاد", "شعبية Stocktwits", "مؤشر الثقة (ML)", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
+                    df_scalp_table = df_scalp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الإيقاف", "إيداعات SEC", "تحذير التخفيف", "التريند العام", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
+                    df_scalp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "حالة التداول", "إيداعات SEC", "التخفيف (Dilution)", "شعبية Stocktwits", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
                     st.dataframe(df_scalp_table, use_container_width=True, hide_index=True)
                 else:
                     st.info("ℹ️ لا توجد حالياً أسهم مطابقة لشروط المضاربة اللحظية السريعة اليوم.")
@@ -431,9 +485,12 @@ def run_session_pipeline(session_name):
                     df_swings_display["حالة الشذوذ"] = df_swings_display["Is_Anomaly"].apply(lambda x: "🚨 نعم" if x else "لا")
                     df_swings_display["احتمالية الانفجار (ML)"] = df_swings_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
                     df_swings_display["التريند العام"] = df_swings_display["Is_Trending"].apply(lambda x: "🔥 رائج جداً" if x else "لا")
+                    df_swings_display["حالة الإيقاف"] = df_swings_display.apply(lambda r: f"🚨 موقوف ({r['Halt_Reason']})" if r["Is_Halted"] else "🟢 نشط", axis=1)
+                    df_swings_display["إيداعات SEC"] = df_swings_display["SEC_Tags"]
+                    df_swings_display["تحذير التخفيف"] = df_swings_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
                     
-                    df_swings_table = df_swings_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الشذوذ", "التريند العام", "مؤشر الثقة", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
-                    df_swings_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "انحراف حجمي حاد", "شعبية Stocktwits", "مؤشر الثقة (ML)", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
+                    df_swings_table = df_swings_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الإيقاف", "إيداعات SEC", "تحذير التخفيف", "التريند العام", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
+                    df_swings_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "حالة التداول", "إيداعات SEC", "التخفيف (Dilution)", "شعبية Stocktwits", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
                     st.dataframe(df_swings_table, use_container_width=True, hide_index=True)
                 else:
                     st.info("ℹ️ لا توجد حالياً أسهم مطابقة لطبقات اليقين السبعة لصفقات السوينغ اليوم.")
