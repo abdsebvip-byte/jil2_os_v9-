@@ -105,11 +105,13 @@ class QuantBacktester:
                 entry_p = pos["entry_price"]
                 qty = pos["qty"]
                 strat = pos["strategy"]
+                target_pct = pos.get("target_percent", 12.0)
+                target_mult = 1.0 + (target_pct / 100.0)
                 
                 # أ. قوانين خروج صفقات المضاربة اللحظية السريعة (تصفية نفس اليوم)
                 if strat == "INTRADAY_SCALPING":
-                    if high_t >= entry_p * 1.15:
-                        exit_price = entry_p * 1.15
+                    if high_t >= entry_p * target_mult:
+                        exit_price = entry_p * target_mult
                         pnl = (exit_price - entry_p) * qty
                         current_capital += (exit_price * qty)
                         trades.append({
@@ -120,11 +122,11 @@ class QuantBacktester:
                             "Entry_Price": entry_p,
                             "Exit_Price": exit_price,
                             "PnL_$": pnl,
-                            "PnL_%": 15.0,
-                            "Result": "WIN (TP 15% Intraday)"
+                            "PnL_%": target_pct,
+                            "Result": f"WIN (TP {target_pct}% Intraday)"
                         })
-                    elif low_t <= entry_p * 0.93:
-                        exit_price = entry_p * 0.93
+                    elif low_t <= entry_p * 0.95:
+                        exit_price = entry_p * 0.95
                         pnl = (exit_price - entry_p) * qty
                         current_capital += (exit_price * qty)
                         trades.append({
@@ -135,8 +137,8 @@ class QuantBacktester:
                             "Entry_Price": entry_p,
                             "Exit_Price": exit_price,
                             "PnL_$": pnl,
-                            "PnL_%": -7.0,
-                            "Result": "LOSS (SL 7% Intraday)"
+                            "PnL_%": -5.0,
+                            "Result": "LOSS (SL 5% Intraday)"
                         })
                     else:
                         # إغلاق إجباري نهاية اليوم لمنع المخاطرة الليلية
@@ -144,6 +146,7 @@ class QuantBacktester:
                         pnl = (exit_price - entry_p) * qty
                         current_capital += (exit_price * qty)
                         pnl_pct = ((exit_price - entry_p) / entry_p) * 100
+                        is_win = exit_price >= entry_p * target_mult
                         trades.append({
                             "Symbol": sym,
                             "Type": strat,
@@ -153,14 +156,13 @@ class QuantBacktester:
                             "Exit_Price": exit_price,
                             "PnL_$": pnl,
                             "PnL_%": pnl_pct,
-                            "Result": f"CLOSE EXPIRED ({'WIN' if pnl >= 0 else 'LOSS'})"
+                            "Result": f"CLOSE EXPIRED ({'WIN' if is_win else 'LOSS'})"
                         })
                 
                 # ب. قوانين صفقات سوينغ الاختراقات والتجميع (تحتاج لعدة أيام)
                 else:
-                    # شرط الخروج 1: تحقيق جني الأرباح المستهدف (>= 50% من سعر الدخول)
-                    if high_t >= entry_p * 1.50:
-                        exit_price = entry_p * 1.50
+                    if high_t >= entry_p * target_mult:
+                        exit_price = entry_p * target_mult
                         pnl = (exit_price - entry_p) * qty
                         current_capital += (exit_price * qty)
                         trades.append({
@@ -171,12 +173,11 @@ class QuantBacktester:
                             "Entry_Price": entry_p,
                             "Exit_Price": exit_price,
                             "PnL_$": pnl,
-                            "PnL_%": 50.0,
-                            "Result": "WIN (TP 50%)"
+                            "PnL_%": target_pct,
+                            "Result": f"WIN (TP {target_pct}%)"
                         })
-                    # شرط الخروج 2: تفعيل وقف الخسارة لحماية رأس المال (<= -15%)
-                    elif low_t <= entry_p * 0.85:
-                        exit_price = entry_p * 0.85
+                    elif low_t <= entry_p * 0.95:
+                        exit_price = entry_p * 0.95
                         pnl = (exit_price - entry_p) * qty
                         current_capital += (exit_price * qty)
                         trades.append({
@@ -187,15 +188,15 @@ class QuantBacktester:
                             "Entry_Price": entry_p,
                             "Exit_Price": exit_price,
                             "PnL_$": pnl,
-                            "PnL_%": -15.0,
-                            "Result": "LOSS (SL 15%)"
+                            "PnL_%": -5.0,
+                            "Result": "LOSS (SL 5%)"
                         })
-                    # شرط الخروج 3: انتهاء المدة القصوى للاحتفاظ (10 أيام تداول)
                     elif pos["days_held"] >= 9: # اليوم العاشر
                         exit_price = close_t
                         pnl = (exit_price - entry_p) * qty
                         current_capital += (exit_price * qty)
                         pnl_pct = ((exit_price - entry_p) / entry_p) * 100
+                        is_win = exit_price >= entry_p * target_mult
                         trades.append({
                             "Symbol": sym,
                             "Type": strat,
@@ -205,7 +206,7 @@ class QuantBacktester:
                             "Exit_Price": exit_price,
                             "PnL_$": pnl,
                             "PnL_%": pnl_pct,
-                            "Result": f"HOLD EXPIRED ({'WIN' if pnl >= 0 else 'LOSS'})"
+                            "Result": f"HOLD EXPIRED ({'WIN' if is_win else 'LOSS'})"
                         })
                     else:
                         pos["days_held"] += 1
@@ -307,17 +308,38 @@ class QuantBacktester:
                 
                 allocation_per_trade = portfolio_value / max_simultaneous_positions
                 
+                from intelligence import QuantIntelligence
+                intel = QuantIntelligence()
+                
                 for sym, price in signals_today:
                     if current_capital >= allocation_per_trade:
                         qty = allocation_per_trade / price
                         current_capital -= allocation_per_trade
+                        
+                        # حساب الهدف ديناميكياً بناءً على نقاط التطابق التاريخية لليوم الحالي
+                        try:
+                            day_candle = df_hist.loc[sym].loc[current_date]
+                            quote_dict = {
+                                "regularMarketPrice": price,
+                                "regularMarketChangePercent": 10.0, 
+                                "regularMarketOpen": float(day_candle.get("open") or price),
+                                "regularMarketPreviousClose": float(day_candle.get("close") or price) / 1.10,
+                                "regularMarketVolume": float(day_candle.get("volume") or 100000.0),
+                                "averageDailyVolume3Month": float(day_candle.get("volume") or 100000.0) / 2.0
+                            }
+                            score, _, _, _, _ = intel.calculate_7_layer_conviction(quote_dict, "REGULAR_SESSION", {})
+                            target_pct = intel.calculate_dynamic_target(score, 70.0)
+                        except:
+                            target_pct = 12.0
+                            
                         active_positions.append({
                             "symbol": sym,
                             "entry_price": price,
                             "qty": qty,
                             "entry_date": current_date_str,
                             "days_held": 0,
-                            "strategy": strategy_type
+                            "strategy": strategy_type,
+                            "target_percent": target_pct
                         })
             
             # د. حساب تقييم المحفظة نهاية اليوم (السيولة + القيمة السوقية للأسهم المفتوحة)

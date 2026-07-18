@@ -922,13 +922,39 @@ with t6:
                 if results["trades"]:
                     st.markdown("### 📋 سجل الصفقات المحاكاة بالتفصيل:")
                     df_trades = pd.DataFrame(results["trades"])
-                    df_trades.columns = ["رمز السهم", "الاستراتيجية", "تاريخ الدخول", "تاريخ الخروج", "سعر الدخول", "سعر الخروج", "الأرباح ($)", "الربح المئوي (%)", "حالة الصفقة"]
                     
-                    # تنسيق الأرقام لسهولة القراءة
-                    df_trades["سعر الدخول"] = df_trades["سعر الدخول"].apply(lambda x: f"${x:.2f}")
-                    df_trades["سعر الخروج"] = df_trades["سعر الخروج"].apply(lambda x: f"${x:.2f}")
-                    df_trades["الأرباح ($)"] = df_trades["الأرباح ($)"].apply(lambda x: f"{x:+.2f}$")
-                    df_trades["الربح المئوي (%)"] = df_trades["الربح المئوي (%)"].apply(lambda x: f"{x:+.1f}%")
+                    # 1. ترجمة الاستراتيجيات
+                    strategy_map = {
+                        "INTRADAY_SCALPING": "🔥 مضاربة لحظية",
+                        "BREAKOUT": "⚡ اختراق حجمي",
+                        "ACCUMULATION": "🏆 تجميع صامت"
+                    }
+                    df_trades["Type"] = df_trades["Type"].apply(lambda x: strategy_map.get(x, x))
+                    
+                    # 2. تنسيق الأرقام والعملات
+                    df_trades["Entry_Price"] = df_trades["Entry_Price"].apply(lambda x: f"${x:.2f}")
+                    df_trades["Exit_Price"] = df_trades["Exit_Price"].apply(lambda x: f"${x:.2f}")
+                    df_trades["PnL_$"] = df_trades["PnL_$"].apply(lambda x: f"{x:+.2f}$" if x >= 0 else f"{x:.2f}$")
+                    df_trades["PnL_%"] = df_trades["PnL_%"].apply(lambda x: f"+{x:.1f}%" if x >= 0 else f"{x:.1f}%")
+                    
+                    # 3. تعريب وتلوين حالة الصفقة
+                    def translate_result(res_str):
+                        res_str = str(res_str).upper()
+                        if "WIN" in res_str:
+                            if "EXPIRED" in res_str or "HOLD" in res_str:
+                                return "🟢 إغلاق إجباري (ربح جزئي)"
+                            return "🟢 ناجحة (ضرب الهدف)"
+                        elif "LOSS" in res_str:
+                            if "EXPIRED" in res_str or "HOLD" in res_str:
+                                return "🔴 إغلاق إجباري (خسارة)"
+                            return "🔴 خاسرة (وقف الخسارة)"
+                        return res_str
+                        
+                    df_trades["Result"] = df_trades["Result"].apply(translate_result)
+                    
+                    # 4. إعادة ترتيب وتسمية الأعمدة لتناسق تام
+                    df_trades = df_trades[["Symbol", "Type", "Entry_Date", "Exit_Date", "Entry_Price", "Exit_Price", "PnL_$", "PnL_%", "Result"]]
+                    df_trades.columns = ["رمز السهم", "الاستراتيجية", "تاريخ الدخول", "تاريخ الخروج", "سعر الدخول", "سعر الخروج", "الأرباح ($)", "الربحية (%)", "حالة الصفقة النهائية"]
                     
                     st.dataframe(df_trades, use_container_width=True, hide_index=True)
                 else:
