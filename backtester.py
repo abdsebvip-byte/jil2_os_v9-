@@ -35,11 +35,15 @@ class QuantBacktester:
         if df_hist is None or df_hist.empty:
             return {"error": "البيانات التاريخية المسترجعة فارغة."}
 
-        # توحيد نوع التواريخ في الفهرس لتفادي أخطاء مقارنة الأنواع المختلفة من التواريخ (mixed types)
+        # التأكد من إعادة بناء الفهرس المتعدد وتوحيد التواريخ
         try:
-            df_hist.index = df_hist.index.set_levels(pd.to_datetime(df_hist.index.levels[1]), level=1)
+            df_hist = df_hist.reset_index()
+            if 'symbol' not in df_hist.columns or 'date' not in df_hist.columns:
+                return {"error": "فشل تنسيق البيانات التاريخية المسترجعة."}
+            df_hist['date'] = pd.to_datetime(df_hist['date'], utc=True)
+            df_hist = df_hist.set_index(['symbol', 'date']).sort_index()
         except Exception as e:
-            print(f"Backtester: Date alignment warning: {str(e)}")
+            print(f"Backtester: MultiIndex alignment warning: {str(e)}")
 
         # 3. استخلاص الفلوت لكل سهم لتطبيقه في تصفية الأسهم الحرة
         print("Backtester: Fetching float details...")
@@ -57,10 +61,15 @@ class QuantBacktester:
                 float_map[sym] = 10000000.0
 
         # ترتيب البيانات حسب التواريخ
-        available_symbols = df_hist.index.levels[0]
-        
-        # استخراج جميع التواريخ الفريدة المتاحة في البيانات وجدولة نطاق الاختبار الفعلي
-        all_dates = sorted(list(set(df_hist.index.levels[1])))
+        try:
+            if isinstance(df_hist.index, pd.MultiIndex):
+                available_symbols = df_hist.index.levels[0]
+                all_dates = sorted(list(set(df_hist.index.levels[1])))
+            else:
+                available_symbols = [symbols[0]] if symbols else []
+                all_dates = sorted(list(set(df_hist.index)))
+        except Exception as e:
+            return {"error": f"فشل استخراج التواريخ ورموز الأسهم للاختبار: {str(e)}"}
         if len(all_dates) < 25:
             return {"error": "البيانات التاريخية المتاحة غير كافية لإجراء الاختبار."}
             
