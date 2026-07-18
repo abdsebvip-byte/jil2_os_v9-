@@ -17,9 +17,15 @@ class FreeMarketScanner:
         Regular market: 09:30 - 16:00 EST
         After-hours: 16:00 - 20:00 EST
         Night/Closed: 20:00 - 04:00 EST
+        Or weekends (Saturday/Sunday) -> NIGHT_CLOSED
         """
         est_tz = pytz.timezone('US/Eastern')
         now_est = datetime.now(est_tz)
+        
+        # التحقق من عطلة نهاية الأسبوع (السبت = 5، الأحد = 6)
+        if now_est.weekday() >= 5:
+            return "NIGHT_CLOSED"
+            
         current_time = now_est.time()
         
         pre_start = datetime.strptime("04:00:00", "%H:%M:%S").time()
