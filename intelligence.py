@@ -161,3 +161,21 @@ class QuantIntelligence:
 
         final_score = max(0, min(100, score))
         return final_score, details, price, price_change, rvol
+
+    def calculate_dynamic_target(self, score, ml_prob=0.0):
+        """
+        Calculate dynamic profit target percentage based on conviction score and ML probability.
+        - Score < 80: standard scalp (+12%)
+        - Score 80-89: momentum run (+30%)
+        - Score 90-94: strong breakout (+60%)
+        - Score >= 95 or ML prob >= 85%: massive short squeeze/mania (+100%)
+        """
+        if score >= 95 or ml_prob >= 85.0:
+            return 100.0
+        elif score >= 90:
+            return 60.0
+        elif score >= 80:
+            return 30.0
+        else:
+            return 12.0
+

@@ -521,18 +521,43 @@ def run_session_pipeline(session_name):
                 # زر إرسال التنبيه الفوري للتيليجرام
                 notifier = TelegramNotifier()
                 if st.button("📢 إرسال إشارة التنبيه للتيليجرام", key="send_tg_alert"):
-                    success = notifier.send_breakout_alert(
-                        symbol=top_stock['Symbol'],
-                        price=top_stock['Price'],
-                        change=top_stock['Change_%'],
-                        rvol=top_stock['RVOL'],
-                        score=top_stock['Conviction_Score'],
-                        confidence=top_stock['Confidence_Score']
+                    target_pct = intel.calculate_dynamic_target(top_stock['Conviction_Score'], top_stock['Confidence_Score'] * 10.0)
+                    
+                    # Fetch SEC details
+                    sec_sentiment = get_sec_filings_sentiment(top_stock['Symbol'])
+                    notes = ""
+                    if sec_sentiment.get("insider_buy"):
+                        notes += "\n⭐ *تنبيه المطلعين:* تم رصد شراء مسؤولين لأسهمهم (Form 4)!"
+                    if sec_sentiment.get("material_news"):
+                        notes += "\n📝 *حدث جوهري:* تم رصد أخبار أو شراكة جديدة (Form 8-K)!"
+                        
+                    alert_msg = (
+                        f"🎯 *فرصة انفجار سعري مكتشفة (طلب يدوي)!*\n\n"
+                        f"🏢 *رمز السهم:* `{top_stock['Symbol']}`\n"
+                        f"💵 *السعر الحالي:* `${top_stock['Price']:.4f}`\n"
+                        f"📈 *التغير اليومي:* `+{top_stock['Change_%']:.2f}%`\n"
+                        f"🔊 *الحجم النسبي RVOL:* `{top_stock['RVOL']:.2f}x`\n\n"
+                        f"🔥 *نسبة تطابق الخوارزمية:* `{top_stock['Conviction_Score']}%`\n"
+                        f"⭐ *مؤشر ثقة السيولة (ML):* `{top_stock['Confidence_Score']}/10`"
+                        f"{notes}\n\n"
+                        f"🎯 *الهدف المقترح ديناميكياً:* `+{target_pct}%` (سعر: `${top_stock['Price'] * (1 + target_pct/100.0):.2f}`)\n"
+                        f"🛡️ *وقف الخسارة الصارم:* `-5%` (سعر: `${top_stock['Price'] * 0.95:.2f}`)\n\n"
+                        f"⚠️ *ملاحظة:* هذه محاكاة تداول حية للحفاظ على رأس مالك."
                     )
+                    
+                    success = notifier.send_custom_message(alert_msg)
                     if success:
                         from database import QuantDatabase
                         db_log = QuantDatabase()
-                        db_log.log_alert_history(top_stock['Symbol'], top_stock['Price'], top_stock['Conviction_Score'], "شراء فوري بسعر السوق (طلب يدوي)")
+                        db_log.log_alert_history(
+                            symbol=top_stock['Symbol'],
+                            price=top_stock['Price'],
+                            score=top_stock['Conviction_Score'],
+                            alert_type="شراء فوري بسعر السوق (طلب يدوي)",
+                            session=session_name,
+                            target_percent=target_pct,
+                            status="PENDING"
+                        )
                         st.success("✅ تم إرسال إشارة التنبيه بنجاح إلى هاتفك عبر تيليجرام!")
                     else:
                         st.error("❌ فشل إرسال التنبيه. يرجى التحقق من صحة المفاتيح في config.env أو Streamlit Secrets.")
@@ -678,12 +703,56 @@ with t5:
         st.write("💼 المحفظة فارغة حالياً. أرسل أمراً للبوت مثل `شراء CLSK 10` للبدء!")
 
     st.write("---")
-    st.markdown("### 📢 أرشيف التنبيهات التاريخية الصادرة (Alerts History Log)")
-    st.write("يعرض هذا الجدول جميع الإشارات والتنبيهات التي تم إطلاقها تلقائياً بالخلفية أو يدوياً خلال الجلسة الحالية.")
+    st.markdown("### 📊 لوحة تقييم كفاءة إشارات التداول (Performance Audit Dashboard)")
+    st.write("تقوم هذه اللوحة باحتساب كفاءة ودقة الخوارزميات ونموذج التعلم الآلي تلقائياً استناداً للنتائج الفعلية المحققة في الجلسات الثلاث.")
     
-    alerts_hist = db.get_alerts_history(limit=50)
-    if alerts_hist:
-        df_alerts = pd.DataFrame(alerts_hist)
+    alerts_hist_all = db.get_alerts_history(limit=250)
+    valid_alerts = [a for a in alerts_hist_all if a.get("price", 0.0) > 0.0]
+    
+    if valid_alerts:
+        total_alerts = len(valid_alerts)
+        success_alerts = sum(1 for a in valid_alerts if a["status"] == "SUCCESS")
+        partial_alerts = sum(1 for a in valid_alerts if a["status"] == "PARTIAL")
+        failed_alerts = sum(1 for a in valid_alerts if a["status"] == "FAILED")
+        pending_alerts = sum(1 for a in valid_alerts if a["status"] == "PENDING")
+        
+        resolved_alerts = total_alerts - pending_alerts
+        win_rate = ((success_alerts + partial_alerts) / resolved_alerts * 100.0) if resolved_alerts > 0 else 0.0
+        full_success_rate = (success_alerts / resolved_alerts * 100.0) if resolved_alerts > 0 else 0.0
+        
+        gains = []
+        for a in valid_alerts:
+            entry = float(a["price"])
+            mx = float(a["max_price_reached"])
+            if entry > 0:
+                gains.append(((mx - entry) / entry) * 100.0)
+        avg_max_gain = sum(gains) / len(gains) if gains else 0.0
+        
+        # 1. كروت قياس الكفاءة التراكمية
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                label="🎯 معدل النجاح الكلي للرادار (Win Rate)", 
+                value=f"{win_rate:.1f}%", 
+                help="نسبة التنبيهات التي حققت الهدف المقترح بالكامل أو صعدت بنسبة لا تقل عن +10% قبل ضرب وقف الخسارة."
+            )
+        with col2:
+            st.metric(
+                label="🏆 معدل النجاح الكامل (Target Hit)", 
+                value=f"{full_success_rate:.1f}%", 
+                help="نسبة التوصيات التي لامست الهدف المقترح ديناميكياً بدقة 100%."
+            )
+        with col3:
+            st.metric(
+                label="📈 متوسط أقصى صعود محقق", 
+                value=f"+{avg_max_gain:.1f}%", 
+                help="متوسط الصعود الأقصى التراكمي الذي سجلته الأسهم بعد لحظة صدور التنبيه."
+            )
+            
+        st.write("")
+        st.markdown("#### 📢 سجل تدقيق الصفقات وأداء الجلسات المفتوحة")
+        
+        df_alerts = pd.DataFrame(valid_alerts)
         df_alerts_display = df_alerts.copy()
         
         def format_time(ts_str):
@@ -695,11 +764,42 @@ with t5:
                 return ts_str
                 
         df_alerts_display["sent_at"] = df_alerts_display["sent_at"].apply(format_time)
-        df_alerts_display["price"] = df_alerts_display["price"].apply(lambda x: f"${x:.4f}" if x > 0 else "متجمد 🚨")
-        df_alerts_display["score"] = df_alerts_display["score"].apply(lambda x: f"{x:.1f}%" if x <= 100 else f"{x}%")
         
-        df_alerts_display = df_alerts_display[["symbol", "sent_at", "price", "score", "alert_type"]]
-        df_alerts_display.columns = ["رمز السهم", "وقت التنبيه", "سعر التنبيه", "نسبة التطابق/اليقين", "نوع التنبيه"]
+        session_map = {
+            "PRE_MARKET": "🛰️ ما قبل السوق",
+            "REGULAR_SESSION": "📊 الجلسة الرسمية",
+            "AFTER_HOURS": "🌙 بعد الإغلاق"
+        }
+        df_alerts_display["session"] = df_alerts_display["session"].apply(lambda x: session_map.get(x, "📊 الجلسة الرسمية"))
+        
+        # حساب أقصى صعود محقق كنسبة مئوية
+        def calc_max_gain(row):
+            try:
+                ent = float(row["price"])
+                mx = float(row["max_price_reached"])
+                return f"+{((mx - ent) / ent * 100.0):.1f}%"
+            except:
+                return "0.0%"
+        df_alerts_display["max_gain"] = df_alerts_display.apply(calc_max_gain, axis=1)
+        
+        df_alerts_display["price"] = df_alerts_display["price"].apply(lambda x: f"${x:.2f}")
+        df_alerts_display["max_price_reached"] = df_alerts_display["max_price_reached"].apply(lambda x: f"${x:.2f}")
+        df_alerts_display["target_percent"] = df_alerts_display["target_percent"].apply(lambda x: f"+{x:.0f}%")
+        
+        status_map = {
+            "SUCCESS": "🟢 ناجح بالكامل",
+            "PARTIAL": "🟡 ناجح جزئياً",
+            "FAILED": "🔴 صفقة خاسرة",
+            "PENDING": "⏳ قيد التتبع"
+        }
+        df_alerts_display["status"] = df_alerts_display["status"].apply(lambda x: status_map.get(x, "⏳ قيد التتبع"))
+        
+        df_alerts_display = df_alerts_display[[
+            "symbol", "session", "sent_at", "price", "target_percent", "max_price_reached", "max_gain", "status"
+        ]]
+        df_alerts_display.columns = [
+            "رمز السهم", "الجلسة", "وقت التنبيه", "سعر الدخول", "الهدف المتوقع", "أقصى سعر محقق", "أقصى صعود", "الحالة النهائية"
+        ]
         st.dataframe(df_alerts_display, use_container_width=True, hide_index=True)
     else:
         st.info("ℹ️ لم يتم إصدار أي تنبيهات أو إشارات تداول خلال الجلسة الحالية حتى الآن.")

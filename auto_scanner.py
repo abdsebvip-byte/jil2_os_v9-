@@ -9,6 +9,55 @@ from notifier import TelegramNotifier
 from database import QuantDatabase
 from alerts_tracker import get_active_halts, get_sec_filings_sentiment
 
+def update_pending_signals_status(db):
+    """
+    Fetch all active 'PENDING' signals from the database, download their latest prices,
+    check if target or stop loss was triggered, and update DB.
+    """
+    import yahooquery as yq
+    try:
+        pending = db.get_pending_alerts()
+        if not pending:
+            return
+            
+        symbols = [p["symbol"] for p in pending]
+        tickers = yq.Ticker(symbols)
+        price_data = tickers.price
+        
+        for p in pending:
+            sym = p["symbol"]
+            alert_id = p["id"]
+            entry_price = float(p["price"])
+            target_pct = float(p["target_percent"])
+            current_max = float(p["max_price_reached"])
+            
+            if sym in price_data and isinstance(price_data[sym], dict):
+                p_info = price_data[sym]
+                current_price = float(p_info.get("regularMarketPrice") or entry_price)
+                day_high = float(p_info.get("regularMarketDayHigh") or current_price)
+                day_low = float(p_info.get("regularMarketDayLow") or current_price)
+                
+                new_max = max(current_max, day_high, current_price)
+                max_gain = ((new_max - entry_price) / entry_price) * 100.0
+                
+                target_price = entry_price * (1.0 + target_pct / 100.0)
+                stop_price = entry_price * 0.95
+                
+                status = "PENDING"
+                if new_max >= target_price:
+                    status = "SUCCESS"
+                elif day_low <= stop_price:
+                    if max_gain >= 10.0:
+                        status = "PARTIAL"
+                    else:
+                        status = "FAILED"
+                        
+                db.update_alert_status(alert_id, new_max, status)
+                if status != "PENDING":
+                    logging.info(f"Signal Tracker: Locked Alert {alert_id} for {sym} as {status}. Max Gain: {max_gain:.2f}%")
+    except Exception as e:
+        logging.warning(f"Signal Tracker Update Error: {e}")
+
 def start_scheduler():
     """
     Main entry point for the background scheduler.
@@ -30,6 +79,9 @@ def start_scheduler():
     
     while True:
         try:
+            # تحديث حالات الصفقات النشطة بالخلفية
+            update_pending_signals_status(db)
+            
             session = scanner.get_current_market_session()
             
             # If market is closed, sleep longer but check halts less frequently
@@ -129,6 +181,14 @@ def start_scheduler():
                                 logging.warning(f"Background Scanner: Skipped dilution target {sym}.")
                                 continue
                                 
+                            # Dynamic Score Adjustments:
+                            # 1. Insider buying (Form 4) boost (+15%)
+                            if sec_sentiment.get("insider_buy"):
+                                score = min(100, score + 15)
+                            # 2. Material event (Form 8-K) boost (+10%)
+                            if sec_sentiment.get("material_news"):
+                                score = min(100, score + 10)
+                                
                             # Add custom notes for positive catalysts
                             notes = ""
                             if sec_sentiment["insider_buy"]:
@@ -136,6 +196,8 @@ def start_scheduler():
                             if sec_sentiment["material_news"]:
                                 notes += "\n📝 *حدث جوهري:* تم رصد أخبار أو شراكة جديدة (Form 8-K)!"
                                 
+                            target_pct = intel.calculate_dynamic_target(score, anomaly_info["confidence_score"] * 10.0)
+                            
                             alert_msg = (
                                 f"🎯 *فرصة انفجار سعري مكتشفة!*\n\n"
                                 f"🏢 *رمز السهم:* `{sym}`\n"
@@ -145,13 +207,23 @@ def start_scheduler():
                                 f"🔥 *نسبة تطابق الخوارزمية:* `{score}%`\n"
                                 f"⭐ *مؤشر ثقة السيولة (ML):* `{anomaly_info['confidence_score']}/10`"
                                 f"{notes}\n\n"
+                                f"🎯 *الهدف المقترح ديناميكياً:* `+{target_pct}%` (سعر: `${price * (1 + target_pct/100.0):.2f}`)\n"
+                                f"🛡️ *وقف الخسارة الصارم:* `-5%` (سعر: `${price * 0.95:.2f}`)\n\n"
                                 f"⚠️ *ملاحظة:* هذه محاكاة تداول حية للحفاظ على رأس مالك."
                             )
                             
                             success = notifier.send_custom_message(alert_msg)
                             if success:
                                 db.log_sent_alert(sym)
-                                db.log_alert_history(sym, price, score, "شراء فوري بسعر السوق (رادار)")
+                                db.log_alert_history(
+                                    symbol=sym,
+                                    price=price,
+                                    score=score,
+                                    alert_type="شراء فوري بسعر السوق (رادار)",
+                                    session=session,
+                                    target_percent=target_pct,
+                                    status="PENDING"
+                                )
                                 
                     except Exception as e:
                         logging.warning(f"Background Scanner Symbol Processing Error for {sym}: {e}")

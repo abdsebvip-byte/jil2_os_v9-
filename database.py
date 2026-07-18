@@ -60,9 +60,31 @@ class QuantDatabase:
                     sent_at TEXT NOT NULL,
                     price REAL NOT NULL,
                     score REAL NOT NULL,
-                    alert_type TEXT NOT NULL
+                    alert_type TEXT NOT NULL,
+                    session TEXT,
+                    target_percent REAL,
+                    max_price_reached REAL DEFAULT 0.0,
+                    status TEXT DEFAULT 'PENDING'
                 )
             """)
+            
+            # محاولة إضافة الأعمدة الجديدة في حال وجود الجدول مسبقاً لمنع أخطاء SQLite
+            try:
+                cursor.execute("ALTER TABLE alerts_history ADD COLUMN session TEXT")
+            except:
+                pass
+            try:
+                cursor.execute("ALTER TABLE alerts_history ADD COLUMN target_percent REAL")
+            except:
+                pass
+            try:
+                cursor.execute("ALTER TABLE alerts_history ADD COLUMN max_price_reached REAL DEFAULT 0.0")
+            except:
+                pass
+            try:
+                cursor.execute("ALTER TABLE alerts_history ADD COLUMN status TEXT DEFAULT 'PENDING'")
+            except:
+                pass
             
             # تهيئة الرصيد الافتراضي بـ 1000 دولار إذا لم يكن موجوداً
             cursor.execute("SELECT COUNT(*) FROM account_balance")
@@ -204,21 +226,21 @@ class QuantDatabase:
             """, (symbol, datetime.now().isoformat()))
             conn.commit()
 
-    def log_alert_history(self, symbol, price, score, alert_type):
+    def log_alert_history(self, symbol, price, score, alert_type, session="REGULAR_SESSION", target_percent=12.0, status="PENDING"):
         symbol = symbol.upper().strip()
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO alerts_history (symbol, sent_at, price, score, alert_type)
-                VALUES (?, ?, ?, ?, ?)
-            """, (symbol, datetime.now().isoformat(), float(price), float(score), str(alert_type)))
+                INSERT INTO alerts_history (symbol, sent_at, price, score, alert_type, session, target_percent, max_price_reached, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (symbol, datetime.now().isoformat(), float(price), float(score), str(alert_type), str(session), float(target_percent), float(price), str(status)))
             conn.commit()
 
     def get_alerts_history(self, limit=50):
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT symbol, sent_at, price, score, alert_type 
+                SELECT symbol, sent_at, price, score, alert_type, session, target_percent, max_price_reached, status 
                 FROM alerts_history 
                 ORDER BY sent_at DESC 
                 LIMIT ?
@@ -229,6 +251,39 @@ class QuantDatabase:
                 "sent_at": r[1],
                 "price": r[2],
                 "score": r[3],
-                "alert_type": r[4]
+                "alert_type": r[4],
+                "session": r[5] if r[5] else "REGULAR_SESSION",
+                "target_percent": r[6] if r[6] is not None else 12.0,
+                "max_price_reached": r[7] if r[7] is not None else r[2],
+                "status": r[8] if r[8] else "PENDING"
             } for r in rows]
+
+    def get_pending_alerts(self):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, symbol, price, target_percent, max_price_reached, status 
+                FROM alerts_history 
+                WHERE status = 'PENDING'
+            """)
+            rows = cursor.fetchall()
+            return [{
+                "id": r[0],
+                "symbol": r[1],
+                "price": r[2],
+                "target_percent": r[3],
+                "max_price_reached": r[4],
+                "status": r[5]
+            } for r in rows]
+
+    def update_alert_status(self, alert_id, max_price, status):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE alerts_history 
+                SET max_price_reached = ?, status = ? 
+                WHERE id = ?
+            """, (float(max_price), str(status), int(alert_id)))
+            conn.commit()
+
 
