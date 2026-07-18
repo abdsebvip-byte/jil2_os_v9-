@@ -271,24 +271,26 @@ if active_halts:
         except:
             price = 5.0
             
-        f_info = hist_features_halts.get(sym, {
-            "volatility_10d": 5.0,
-            "prev_rvol": 1.0,
-            "prev_change": 0.0,
-            "float_shares_m": 10.0,
-            "short_percent": 0.0
-        })
+        f_info = hist_features_halts.get(sym) if isinstance(hist_features_halts, dict) else None
+        if not isinstance(f_info, dict):
+            f_info = {
+                "volatility_10d": 5.0,
+                "prev_rvol": 1.0,
+                "prev_change": 0.0,
+                "float_shares_m": 10.0,
+                "short_percent": 0.0
+            }
         
         # Calculate ML probability using the actual change percent of the halted symbol
         ml_prob = ml_classifier.predict_probability(
             price=price,
             change=change,
-            rvol=f_info["prev_rvol"],
-            volatility_10d=f_info["volatility_10d"],
-            prev_rvol=f_info["prev_rvol"],
-            prev_change=f_info["prev_change"],
-            float_shares_m=f_info["float_shares_m"],
-            short_percent=f_info["short_percent"]
+            rvol=f_info.get("prev_rvol", 1.0),
+            volatility_10d=f_info.get("volatility_10d", 5.0),
+            prev_rvol=f_info.get("prev_rvol", 1.0),
+            prev_change=f_info.get("prev_change", 0.0),
+            float_shares_m=f_info.get("float_shares_m", 10.0),
+            short_percent=f_info.get("short_percent", 0.0)
         )
         
         # Always calculate suggested trade parameters so the user is never left with dashed values
@@ -431,6 +433,23 @@ def run_session_pipeline(session_name):
                         sec_sentiment = get_sec_filings_sentiment(sym)
                         sec_tags = ", ".join(sec_sentiment["details"]) if sec_sentiment["details"] else "لا يوجد"
                         is_dilution = sec_sentiment["dilution_warning"]
+                        
+                        # 1. تعديل النقاط بناءً على ملكية الملاك (Form 4) +15%
+                        if sec_sentiment.get("insider_buy"):
+                            score = min(100, score + 15)
+                            
+                        # 2. تعديل النقاط بناءً على الأحداث الجوهرية (Form 8-K) +10%
+                        if sec_sentiment.get("material_news"):
+                            score = min(100, score + 10)
+                            
+                        # 3. عقوبة تخفيف الأسهم (Form S-1) تخصم 70% لمنع تداول السهم
+                        if is_dilution:
+                            score = max(0, score - 70)
+                            
+                    # 4. تعديل النقاط بناءً على زخم التداول الاجتماعي (Stocktwits) +10%
+                    # نمنح الزخم الاجتماعي القوة فقط إذا كانت المؤشرات الفنية مستقرة أصلاً (score >= 70) لمنع الـ FOMO والتلاعب
+                    if is_trending and score >= 70:
+                        score = min(100, score + 10)
                     
                     
                     opportunities.append({
