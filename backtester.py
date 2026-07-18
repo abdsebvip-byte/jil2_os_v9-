@@ -15,6 +15,8 @@ class QuantBacktester:
         Target Exit: Profit Target +50%, Stop Loss -15%, or Max Hold of 10 trading days.
         """
         print(f"Backtester: Initializing backtest for {strategy_type} over {days_to_test} days...")
+        from ml_classifier import QuantMLClassifier
+        ml_classifier = QuantMLClassifier()
         
         # 1. جلب قائمة الأسهم المرشحة النشطة
         symbols = self.scanner.fetch_all_us_symbols()
@@ -45,20 +47,27 @@ class QuantBacktester:
         except Exception as e:
             print(f"Backtester: MultiIndex alignment warning: {str(e)}")
 
-        # 3. استخلاص الفلوت لكل سهم لتطبيقه في تصفية الأسهم الحرة
-        print("Backtester: Fetching float details...")
+        # 3. استخلاص الفلوت ونسبة الشورت لكل سهم
+        print("Backtester: Fetching float & short stats...")
         float_map = {}
+        short_map = {}
         try:
             stats = ticker_batch.key_stats
             for sym in symbols:
                 stat_info = stats.get(sym)
                 float_shares = 10000000.0 # افتراضي 10 مليون في حال الغياب
-                if isinstance(stat_info, dict) and stat_info.get("floatShares"):
-                    float_shares = float(stat_info["floatShares"])
+                short_pct = 0.0
+                if isinstance(stat_info, dict):
+                    if stat_info.get("floatShares"):
+                        float_shares = float(stat_info["floatShares"])
+                    if stat_info.get("shortPercentOfFloat"):
+                        short_pct = float(stat_info["shortPercentOfFloat"]) * 100.0
                 float_map[sym] = float_shares
+                short_map[sym] = short_pct
         except:
             for sym in symbols:
                 float_map[sym] = 10000000.0
+                short_map[sym] = 0.0
 
         # ترتيب البيانات حسب التواريخ
         try:
@@ -223,27 +232,7 @@ class QuantBacktester:
             
             if available_slots > 0:
                 for sym in available_symbols:
-                    # تجنب تكرار شراء سهم نمتلكه بالفعل
-                    if any(p["symbol"] == sym for p in active_positions):
-                        continue
-                        
-                    try:
-                        # جلب تاريخ السهم حتى اليوم الحالي فقط لمنع الانحياز المستقبلي
-                        stock_hist = df_hist.loc[sym].loc[:current_date]
-                        if len(stock_hist) < 6:
-                            continue
-                            
-                        # تصفية الفلوت والسعر
-                        price_today = float(stock_hist['close'].iloc[-1])
-                        # تضمين الأسهم الرخيصة جداً بناءً على طلب أبو فيصل المحدث (0.1$ - 10$)
-                        if price_today < 0.1 or price_today > 10.0:
-                            continue
-                            
-                        f_shares = float_map.get(sym, 10000000.0)
-                        if f_shares > 15000000.0: # فلوت منخفض
-                            continue
-
-                        # تطبيق خوارزمية التجميع الصامت التاريخية المحدثة
+                           # تطبيق خوارزمية التجميع الصامت التاريخية المحدثة
                         if strategy_type == "ACCUMULATION":
                             ticker_df = stock_hist.tail(10) # فحص تماسك 10 أيام
                             close_prev = ticker_df['close'].iloc[:-1]
@@ -257,13 +246,34 @@ class QuantBacktester:
                             avg_vol_20 = stock_hist['volume'].tail(20).mean()
                             today_vol = float(stock_hist['volume'].iloc[-1])
                             volume_multiplier = today_vol / avg_vol_20 if avg_vol_20 > 0 else 1.0
-                            is_vol_spike = volume_multiplier >= 2.5 # زيادة حجم التداول التاريخية
+                            is_vol_spike = volume_multiplier >= 4.0 # زيادة حجم التداول التاريخية المحدثة (4 أضعاف)
                             
                             pct_change = ((price_today - float(stock_hist['close'].iloc[-2])) / float(stock_hist['close'].iloc[-2])) * 100
                             is_price_stable = abs(pct_change) <= 3.5 # استقرار السعر اليوم للتجميع الصامت
                             
                             if is_consolidating and is_vol_spike and is_price_stable:
-                                signals_today.append((sym, price_today))
+                                try:
+                                    close_tail = stock_hist['close'].tail(10)
+                                    volatility_10d = (close_tail.std() / close_tail.mean() * 100.0) if close_tail.mean() > 0 else 0.0
+                                    
+                                    prev_vol_avg = stock_hist['volume'].iloc[-21:-1].mean()
+                                    prev_rvol = (stock_hist['volume'].iloc[-2] / prev_vol_avg) if prev_vol_avg > 0 else 1.0
+                                    
+                                    prev_price = float(stock_hist['close'].iloc[-2])
+                                    prev_prev_price = float(stock_hist['close'].iloc[-3]) if len(stock_hist) >= 3 else prev_price
+                                    prev_change = ((prev_price - prev_prev_price) / prev_prev_price * 100.0) if prev_prev_price > 0 else 0.0
+                                    
+                                    f_shares_m = float_map.get(sym, 10000000.0) / 1000000.0
+                                    short_pct = short_map.get(sym, 0.0)
+                                    
+                                    prob = ml_classifier.predict_probability(
+                                        price_today, pct_change, volume_multiplier, volatility_10d, 
+                                        prev_rvol, prev_change, f_shares_m, short_pct
+                                    )
+                                    if prob >= 60.0:
+                                        signals_today.append((sym, price_today, prob))
+                                except:
+                                    pass
                                 
                         # تطبيق خوارزمية الاختراق واليقين المحدثة (مع فلتر مقاومة الذيول المصيدة)
                         elif strategy_type in ["BREAKOUT", "INTRADAY_SCALPING"]:
@@ -275,7 +285,7 @@ class QuantBacktester:
                             vol_today = float(stock_hist['volume'].iloc[-1])
                             
                             is_above_sma = price_today > sma_20
-                            is_vol_breakout = vol_today >= vol_avg_20 * 2.5 # اختراق حجم قوي
+                            is_vol_breakout = vol_today >= vol_avg_20 * 4.0 # اختراق حجم قوي محدث (4 أضعاف)
                             pct_change = ((price_today - price_prev) / price_prev) * 100
                             is_price_surge = pct_change >= 4.0 # صعود حقيقي
                             
@@ -287,10 +297,32 @@ class QuantBacktester:
                             is_close_near_high = (close_from_high <= range_today * 0.20) if range_today > 0 else False
                             
                             if is_above_sma and is_vol_breakout and is_price_surge and is_close_near_high:
-                                signals_today.append((sym, price_today))
+                                try:
+                                    close_tail = stock_hist['close'].tail(10)
+                                    volatility_10d = (close_tail.std() / close_tail.mean() * 100.0) if close_tail.mean() > 0 else 0.0
+                                    
+                                    rvol = vol_today / vol_avg_20 if vol_avg_20 > 0 else 1.0
+                                    prev_vol_avg = stock_hist['volume'].iloc[-21:-1].mean()
+                                    prev_rvol = (stock_hist['volume'].iloc[-2] / prev_vol_avg) if prev_vol_avg > 0 else 1.0
+                                    
+                                    prev_price = float(stock_hist['close'].iloc[-2])
+                                    prev_prev_price = float(stock_hist['close'].iloc[-3]) if len(stock_hist) >= 3 else prev_price
+                                    prev_change = ((prev_price - prev_prev_price) / prev_prev_price * 100.0) if prev_prev_price > 0 else 0.0
+                                    
+                                    f_shares_m = float_map.get(sym, 10000000.0) / 1000000.0
+                                    short_pct = short_map.get(sym, 0.0)
+                                    
+                                    prob = ml_classifier.predict_probability(
+                                        price_today, pct_change, rvol, volatility_10d, 
+                                        prev_rvol, prev_change, f_shares_m, short_pct
+                                    )
+                                    if prob >= 60.0:
+                                        signals_today.append((sym, price_today, prob))
+                                except:
+                                    pass
                     except:
                         continue
-
+ 
             # ج. تنفيذ الدخول في الصفقات الجديدة
             # نقسم القيمة الكلية الحالية للمحفظة بالتساوي للحصول على حجم صفقة موحد
             if signals_today and available_slots > 0:
@@ -311,7 +343,7 @@ class QuantBacktester:
                 from intelligence import QuantIntelligence
                 intel = QuantIntelligence()
                 
-                for sym, price in signals_today:
+                for sym, price, prob in signals_today:
                     if current_capital >= allocation_per_trade:
                         qty = allocation_per_trade / price
                         current_capital -= allocation_per_trade
@@ -328,7 +360,7 @@ class QuantBacktester:
                                 "averageDailyVolume3Month": float(day_candle.get("volume") or 100000.0) / 2.0
                             }
                             score, _, _, _, _ = intel.calculate_7_layer_conviction(quote_dict, "REGULAR_SESSION", {})
-                            target_pct = intel.calculate_dynamic_target(score, 70.0)
+                            target_pct = intel.calculate_dynamic_target(score, prob)
                         except:
                             target_pct = 12.0
                             

@@ -467,6 +467,8 @@ def run_session_pipeline(session_name):
                         "Halt_Reason": halt_reason,
                         "SEC_Tags": sec_tags,
                         "Is_Dilution": is_dilution,
+                        "Float_M": f_info["float_shares_m"],
+                        "Short_Pct": f_info["short_percent"],
                         "Matches": details
                     })
                 except Exception as e:
@@ -582,66 +584,57 @@ def run_session_pipeline(session_name):
                         else:
                             st.error(f"❌ {name}\n\n({val})")
                 
-                # --- القسم الثالث: تقسيم الجداول لحماية رأس المال ---
+                # --- القسم الثالث: فرز وتوزيع الصفقات لحماية رأس المال ---
                 st.write("---")
                 
-                # أ. أسهم المضاربة اللحظية السريعة (Intraday Scalping Radar)
-                st.markdown("### 🔥 رادار المضاربة اللحظية السريعة (Intraday Scalping - Target +15% / Stop -7% / Exit Today)")
-                st.write("أسهم رخيصة تحت 10$ تشهد اختراقاً حركياً وحجمياً قوياً اليوم، وتستهدف الخروج السريع في نفس اليوم لحماية رأس المال.")
+                # أ. صفقات الانفجار المعتمدة (High-Conviction Explosive Plays)
+                st.markdown("### 💥 صفقات الانفجار المعتمدة (High-Conviction Explosive Plays - Target dynamic / Stop -5%)")
+                st.write("أسهم فائقة القوة مطابقة لشروط الانفجار الميكروية الصارمة (تطابق >= 80%، تعلم آلي >= 60%، حجم نسبي >= 4.0x، أسهم حرة <= 15M، شورت >= 10%).")
                 
-                df_scalp = df_opportunities[
-                    (df_opportunities["Price"] >= 0.1) & 
-                    (df_opportunities["Price"] <= 10.0) & 
-                    (df_opportunities["Change_%"] >= 4.0) & 
-                    (df_opportunities["RVOL"] >= 2.5)
+                df_explosive = df_opportunities[
+                    (df_opportunities["Conviction_Score"] >= 80) &
+                    (df_opportunities["ML_Probability"] >= 60.0) &
+                    (df_opportunities["RVOL"] >= 4.0) &
+                    (df_opportunities["Float_M"] <= 15.0) &
+                    (df_opportunities["Short_Pct"] >= 10.0)
                 ].copy()
                 
-                if not df_scalp.empty:
-                    # ترتيب جدول المضاربة اللحظية حسب احتمالية الانفجار التنبؤية للذكاء الاصطناعي
-                    df_scalp = df_scalp.sort_values(by="ML_Probability", ascending=False)
+                if not df_explosive.empty:
+                    df_exp_display = df_explosive.copy()
+                    df_exp_display["تطابق الخوارزمية"] = df_exp_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%")
+                    df_exp_display["احتمالية الانفجار (ML)"] = df_exp_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
+                    df_exp_display["الأسهم الحرة"] = df_exp_display["Float_M"].apply(lambda x: f"{x:.1f}M")
+                    df_exp_display["نسبة الشورت"] = df_exp_display["Short_Pct"].apply(lambda x: f"{x:.1f}%")
+                    df_exp_display["حالة الإيقاف"] = df_exp_display.apply(lambda r: f"🚨 موقوف ({r['Halt_Reason']})" if r["Is_Halted"] else "🟢 نشط", axis=1)
+                    df_exp_display["تحذير التخفيف"] = df_exp_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
                     
-                    df_scalp_display = df_scalp.copy()
-                    df_scalp_display["تطابق الخوارزمية"] = df_scalp_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%" if x >= 80 else f"⚡ {x}%")
-                    df_scalp_display["مؤشر الثقة"] = df_scalp_display["Confidence_Score"].apply(lambda x: f"⭐ {x}/10")
-                    df_scalp_display["حالة الشذوذ"] = df_scalp_display["Is_Anomaly"].apply(lambda x: "🚨 نعم" if x else "لا")
-                    df_scalp_display["احتمالية الانفجار (ML)"] = df_scalp_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
-                    df_scalp_display["التريند العام"] = df_scalp_display["Is_Trending"].apply(lambda x: "🔥 رائج جداً" if x else "لا")
-                    df_scalp_display["حالة الإيقاف"] = df_scalp_display.apply(lambda r: f"🚨 موقوف ({r['Halt_Reason']})" if r["Is_Halted"] else "🟢 نشط", axis=1)
-                    df_scalp_display["إيداعات SEC"] = df_scalp_display["SEC_Tags"]
-                    df_scalp_display["تحذير التخفيف"] = df_scalp_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
-                    
-                    df_scalp_table = df_scalp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الإيقاف", "إيداعات SEC", "تحذير التخفيف", "التريند العام", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
-                    df_scalp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "حالة التداول", "إيداعات SEC", "التخفيف (Dilution)", "شعبية Stocktwits", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
-                    st.dataframe(df_scalp_table, use_container_width=True, hide_index=True)
+                    df_exp_table = df_exp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة الإيقاف", "تحذير التخفيف", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
+                    df_exp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة التداول", "التخفيف (Dilution)", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
+                    st.dataframe(df_exp_table, use_container_width=True, hide_index=True)
                 else:
-                    st.info("ℹ️ لا توجد حالياً أسهم مطابقة لشروط المضاربة اللحظية السريعة اليوم.")
-                
+                    st.info("ℹ️ لا توجد حالياً أسهم مطابقة لمعايير الانفجار السعري الصارمة في هذه اللحظة (RVOL >= 4.0, Float <= 15M, Short >= 10%).")
+                    
                 st.write("---")
                 
-                # ب. الأسهم الانفجارية الحقيقية طويلة المدى (Explosive Swing Breakouts)
-                st.markdown("### 🚀 رادار الاختراق واليقين طويل المدى (Explosive Swing Breakouts - Target +50%)")
-                st.write("أسهم عالية اليقين مطابقة للطبقات السبعة لليقين، تستهدف الاحتفاظ لعدة أيام عمل لتحقيق انفجارات سعرية كبرى تصل لـ 50% فما فوق.")
+                # ب. أسهم المضاربة اللحظية السريعة اليومية (Daily Fast Momentum Scalps)
+                st.markdown("### ⚡ أسهم المضاربة اللحظية السريعة اليومية (Daily Fast Momentum Scalps - Target +12% / Stop -5%)")
+                st.write("أسهم نشطة حركياً تشهد اختراق حجمي، ومناسبة للمضاربة السريعة خلال اليوم لتوليد الأرباح أثناء انتظار الصفقات الانفجارية.")
                 
-                df_swings = df_opportunities[df_opportunities["Conviction_Score"] >= 80].copy()
-                if not df_swings.empty:
-                    # ترتيب الاختراقات طويلة المدى حسب احتمالية الانفجار
-                    df_swings = df_swings.sort_values(by="ML_Probability", ascending=False)
+                df_scalp = df_opportunities[~df_opportunities["Symbol"].isin(df_explosive["Symbol"])].copy()
+                
+                if not df_scalp.empty:
+                    df_scalp_display = df_scalp.copy()
+                    df_scalp_display["تطابق الخوارزمية"] = df_scalp_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%" if x >= 80 else f"⚡ {x}%")
+                    df_scalp_display["احتمالية الانفجار (ML)"] = df_scalp_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
+                    df_scalp_display["الأسهم الحرة"] = df_scalp_display["Float_M"].apply(lambda x: f"{x:.1f}M")
+                    df_scalp_display["حالة الإيقاف"] = df_scalp_display.apply(lambda r: f"🚨 موقوف ({r['Halt_Reason']})" if r["Is_Halted"] else "🟢 نشط", axis=1)
+                    df_scalp_display["تحذير التخفيف"] = df_scalp_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
                     
-                    df_swings_display = df_swings.copy()
-                    df_swings_display["تطابق الخوارزمية"] = df_swings_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%" if x >= 80 else f"⚡ {x}%")
-                    df_swings_display["مؤشر الثقة"] = df_swings_display["Confidence_Score"].apply(lambda x: f"⭐ {x}/10")
-                    df_swings_display["حالة الشذوذ"] = df_swings_display["Is_Anomaly"].apply(lambda x: "🚨 نعم" if x else "لا")
-                    df_swings_display["احتمالية الانفجار (ML)"] = df_swings_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
-                    df_swings_display["التريند العام"] = df_swings_display["Is_Trending"].apply(lambda x: "🔥 رائج جداً" if x else "لا")
-                    df_swings_display["حالة الإيقاف"] = df_swings_display.apply(lambda r: f"🚨 موقوف ({r['Halt_Reason']})" if r["Is_Halted"] else "🟢 نشط", axis=1)
-                    df_swings_display["إيداعات SEC"] = df_swings_display["SEC_Tags"]
-                    df_swings_display["تحذير التخفيف"] = df_swings_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
-                    
-                    df_swings_table = df_swings_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "حالة الإيقاف", "إيداعات SEC", "تحذير التخفيف", "التريند العام", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
-                    df_swings_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "حالة التداول", "إيداعات SEC", "التخفيف (Dilution)", "شعبية Stocktwits", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
-                    st.dataframe(df_swings_table, use_container_width=True, hide_index=True)
+                    df_scalp_table = df_scalp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "حالة الإيقاف", "تحذير التخفيف", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
+                    df_scalp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "حالة التداول", "التخفيف (Dilution)", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
+                    st.dataframe(df_scalp_table, use_container_width=True, hide_index=True)
                 else:
-                    st.info("ℹ️ لا توجد حالياً أسهم مطابقة لطبقات اليقين السبعة لصفقات السوينغ اليوم.")
+                    st.info("ℹ️ لا توجد حالياً أسهم نشطة للمضاربة السريعة اليومية.")
                 
             else:
                 st.warning("⚠️ لا توجد حالياً أسهم رخيصة تحقق شروط الانفجار الصارمة ومؤشرات الشذوذ في هذه الجلسة.")
