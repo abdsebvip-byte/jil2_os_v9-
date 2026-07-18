@@ -76,6 +76,7 @@ def start_scheduler():
     
     cycle_counter = 0
     notified_halts = set()
+    recommended_halts = set()
     
     while True:
         try:
@@ -97,29 +98,109 @@ def start_scheduler():
                 # Check for new halts
                 for sym, reason in active_halts.items():
                     if sym not in notified_halts:
-                        alert_text = (
-                            f"🚨 *تنبيه عاجل: تم إيقاف تداول سهم {sym}!* 🚨\n\n"
-                            f"🔹 *السبب:* `LULD/Volatility` ({reason})\n"
-                            f"⏱️ *حالة السعر:* متجمد حالياً.\n"
-                            f"💡 *التوجيه:* راقب السعر وتأهب لصفقة الاختراق فور استئناف التداول!"
-                        )
-                        success = notifier.send_custom_message(alert_text)
-                        if success:
+                        # Exclude warrants/ SPACs
+                        if len(sym) > 4 or sym.endswith(("U", "W", "R")):
                             notified_halts.add(sym)
-                            db.log_alert_history(sym, 0.0, 100.0, f"إيقاف تداول ({reason})")
+                            continue
+                            
+                        # Fetch quote details in real-time
+                        import yahooquery as yq
+                        try:
+                            t = yq.Ticker(sym)
+                            price_data = t.price.get(sym, {})
+                            if not isinstance(price_data, dict):
+                                notified_halts.add(sym)
+                                continue
+                                
+                            price = float(price_data.get("regularMarketPrice") or 0.0)
+                            prev_close = float(price_data.get("regularMarketPreviousClose") or price)
+                            change = ((price - prev_close) / prev_close * 100.0) if prev_close > 0 else 0.0
+                            
+                            # Only trade upward halts (bullish breakouts)
+                            if change < 5.0:
+                                # Log silently to database and mark as notified to avoid spamming
+                                notified_halts.add(sym)
+                                continue
+                                
+                            # Calculate conviction score and features
+                            avg_vol = float(price_data.get("averageDailyVolume3Month") or 100000.0)
+                            current_vol = float(price_data.get("regularMarketVolume") or 0.0)
+                            rvol = current_vol / avg_vol if avg_vol > 0 else 1.0
+                            
+                            anomaly_info = {"is_anomaly": True, "confidence_score": 7.0} 
+                            score, details, prc, chg, rv = intel.calculate_7_layer_conviction(price_data, session, anomaly_info)
+                            
+                            # Fetch news catalyst (SEC Form 4 or 8-K)
+                            sec_sentiment = get_sec_filings_sentiment(sym)
+                            is_dilution = sec_sentiment["dilution_warning"]
+                            
+                            # Apply SEC boosts
+                            if sec_sentiment.get("insider_buy"):
+                                score = min(100, score + 15)
+                            if sec_sentiment.get("material_news"):
+                                score = min(100, score + 10)
+                            if is_dilution:
+                                score = max(0, score - 70)
+                                
+                            # Skip if dilution warning or low conviction
+                            if is_dilution or score < 75:
+                                notified_halts.add(sym)
+                                continue
+                                
+                            # Determine dynamic target percentage
+                            target_pct = intel.calculate_dynamic_target(score, 70.0)
+                            
+                            notes = ""
+                            if sec_sentiment["insider_buy"]:
+                                notes += "\n⭐ *تنبيه المطلعين:* تم رصد شراء مسؤولين لأسهمهم (Form 4)!"
+                            if sec_sentiment["material_news"]:
+                                notes += "\n📝 *حدث جوهري:* تم رصد أخبار أو شراكة جديدة (Form 8-K)!"
+                                
+                            alert_text = (
+                                f"🎯 *توصية صفقة استئناف موصى بها!* 🎯\n\n"
+                                f"🏢 *رمز السهم:* `{sym}`\n"
+                                f"📈 *نوع الإيقاف:* `صعود حاد مفاجئ` ({reason})\n"
+                                f"💵 *سعر الدخول المقترح:* `${price:.2f}` (عند الاستئناف)\n"
+                                f"📊 *نسبة التغير اليومي:* `+{change:.2f}%`\n"
+                                f"🔊 *الحجم النسبي RVOL:* `{rvol:.2f}x`\n\n"
+                                f"🔥 *نقاط تطابق الخوارزمية:* `{score}%`"
+                                f"{notes}\n\n"
+                                f"🎯 *الهدف المقترح ديناميكياً:* `+{target_pct}%` (سعر: `${price * (1 + target_pct/100.0):.2f}`)\n"
+                                f"🛡️ *وقف الخسارة الصارم:* `-5%` (سعر: `${price * 0.95:.2f}`)\n\n"
+                                f"⚠️ *توجيه:* يرجى تفعيل الشراء بسعر محدد (Limit Order) قريباً من سعر الدخول لتجنب الانزلاق السعري عند فتح التداول."
+                            )
+                            
+                            success = notifier.send_custom_message(alert_text)
+                            if success:
+                                notified_halts.add(sym)
+                                recommended_halts.add(sym)
+                                db.log_alert_history(
+                                    symbol=sym,
+                                    price=price,
+                                    score=score,
+                                    alert_type=f"صفقة استئناف ({reason})",
+                                    session=session,
+                                    target_percent=target_pct,
+                                    status="PENDING"
+                                )
+                        except Exception as ex:
+                            logging.warning(f"Error checking halt symbol {sym} price details: {ex}")
+                            notified_halts.add(sym)
                         
                 # Check for resumption
                 resumed_syms = []
                 for sym in list(notified_halts):
                     if sym not in active_halts:
-                        res_text = (
-                            f"🟢 *استئناف التداول: عاد سهم {sym} للعمل الآن!* 🟢\n\n"
-                            f"📈 راقب حركة شمعة الدقيقة الأولى لتأكيد اتجاه السيولة."
-                        )
-                        success = notifier.send_custom_message(res_text)
-                        if success:
-                            resumed_syms.append(sym)
-                            db.log_alert_history(sym, 0.0, 100.0, "استئناف التداول")
+                        if sym in recommended_halts:
+                            res_text = (
+                                f"🟢 *استئناف التداول: عاد سهم {sym} للعمل الآن!* 🟢\n\n"
+                                f"📈 راقب حركة شمعة الدقيقة الأولى لتأكيد اتجاه السيولة."
+                            )
+                            success = notifier.send_custom_message(res_text)
+                            if success:
+                                db.log_alert_history(sym, 0.0, 100.0, "استئناف التداول")
+                            recommended_halts.discard(sym)
+                        resumed_syms.append(sym)
                 for sym in resumed_syms:
                     notified_halts.remove(sym)
             except Exception as e:

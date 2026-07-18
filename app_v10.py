@@ -707,8 +707,24 @@ with t5:
     st.write("تقوم هذه اللوحة باحتساب كفاءة ودقة الخوارزميات ونموذج التعلم الآلي تلقائياً استناداً للنتائج الفعلية المحققة في الجلسات الثلاث.")
     
     alerts_hist_all = db.get_alerts_history(limit=250)
-    valid_alerts = [a for a in alerts_hist_all if a.get("price", 0.0) > 0.0]
     
+    valid_alerts = []
+    if isinstance(alerts_hist_all, list):
+        for a in alerts_hist_all:
+            if isinstance(a, dict) and a.get("price", 0.0) > 0.0:
+                safe_alert = {
+                    "symbol": a.get("symbol", ""),
+                    "sent_at": a.get("sent_at", ""),
+                    "price": a.get("price", 0.0),
+                    "score": a.get("score", 0.0),
+                    "alert_type": a.get("alert_type", ""),
+                    "session": a.get("session", "REGULAR_SESSION"),
+                    "target_percent": a.get("target_percent", 12.0),
+                    "max_price_reached": a.get("max_price_reached", a.get("price", 0.0)),
+                    "status": a.get("status", "PENDING")
+                }
+                valid_alerts.append(safe_alert)
+                
     if valid_alerts:
         total_alerts = len(valid_alerts)
         success_alerts = sum(1 for a in valid_alerts if a["status"] == "SUCCESS")
