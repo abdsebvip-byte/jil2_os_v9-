@@ -72,3 +72,25 @@ class TelegramNotifier:
         except Exception as e:
             print(f"TelegramNotifier: Connection error: {str(e)}")
             return False
+
+    def send_custom_message(self, text):
+        """
+        Sends a general custom Markdown text message to the channel.
+        """
+        if not self.token or not self.chat_id:
+            print("TelegramNotifier: Credentials not loaded.")
+            return False
+            
+        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+        payload = {
+            "chat_id": self.chat_id,
+            "text": text,
+            "parse_mode": "Markdown"
+        }
+        try:
+            response = requests.post(url, json=payload, timeout=8)
+            return response.status_code == 200
+        except Exception as e:
+            print(f"TelegramNotifier Custom Message Error: {e}")
+            return False
+
