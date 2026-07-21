@@ -646,7 +646,7 @@ def run_session_pipeline(session_name):
                     st.write("📈 **قائمة الأسهم التي تشهد شذوذاً حجمياً استثنائياً حالياً:**")
                     df_anom_display = df_anomalies[["Symbol", "Price", "Change_%", "Volume", "RVOL", "Confidence_Score"]].copy()
                     df_anom_display.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "مؤشر ثقة الاختراق (0-10)"]
-                    st.dataframe(df_anom_display, use_container_width=True, hide_index=True)
+                    st.markdown(render_premium_table(df_anom_display), unsafe_allow_html=True)
                 else:
                     st.info("ℹ️ لم يتم العثور على شذوذ حجمي غير طبيعي في فلاتر الأسعار تحت 20$ حالياً.")
                 
