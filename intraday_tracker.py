@@ -62,12 +62,32 @@ def get_historical_features(symbols):
                 avg_vol_10d = stock_data['volume'].iloc[:-1].mean()
                 prev_rvol = float(row_prev['volume']) / avg_vol_10d if avg_vol_10d > 0 else 1.0
                 
-                # Volatility over 10 days
-                closes_10d = stock_data['close'].iloc[-10:]
-                max_p = closes_10d.max()
-                min_p = closes_10d.min()
-                mean_p = closes_10d.mean()
-                volatility_10d = ((max_p - min_p) / mean_p) * 100 if mean_p > 0 else 0.0
+                # 10-day Bollinger Band Width (BBW)
+                std_10d = closes_10d.std()
+                bbw = (4.0 * std_10d) / mean_p if mean_p > 0 else 0.1
+                
+                # Check historical BBW values over the last 5 days to identify a squeeze
+                bbw_list = []
+                for j in range(5):
+                    sub_closes = stock_data['close'].iloc[-10 - j : -j] if j > 0 else closes_10d
+                    sub_mean = sub_closes.mean()
+                    sub_std = sub_closes.std()
+                    bbw_list.append((4.0 * sub_std) / sub_mean if sub_mean > 0 else 0.1)
+                is_squeeze = bbw == min(bbw_list)
+                
+                # Volatility Contraction Pattern (VCP) detection
+                range_3d = stock_data['high'].iloc[-3:].max() - stock_data['low'].iloc[-3:].min()
+                range_10d = stock_data['high'].iloc[-10:].max() - stock_data['low'].iloc[-10:].min()
+                is_vcp = range_3d < (0.6 * range_10d) if range_10d > 0 else False
+                
+                # Calculate Squeeze & Compression Score (0 - 100)
+                sq_score = 0
+                if is_squeeze:
+                    sq_score += 50
+                if is_vcp:
+                    sq_score += 30
+                if prev_rvol < 1.2:
+                    sq_score += 20
                 
                 # Fundamental features
                 f_data = stats_data.get(sym, {"float_shares_m": 10.0, "short_percent": 0.0})
@@ -77,7 +97,8 @@ def get_historical_features(symbols):
                     "prev_rvol": round(prev_rvol, 2),
                     "prev_change": round(prev_change, 2),
                     "float_shares_m": round(f_data["float_shares_m"], 2),
-                    "short_percent": round(f_data["short_percent"], 2)
+                    "short_percent": round(f_data["short_percent"], 2),
+                    "squeeze_score": sq_score
                 }
             except Exception as e:
                 pass

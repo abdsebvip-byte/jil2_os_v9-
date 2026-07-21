@@ -131,6 +131,130 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+def render_premium_table(df):
+    """
+    تحويل DataFrame إلى جدول HTML أنيق وعالي التباين متناسق الألوان ومناسب للوضع المظلم المتطور.
+    """
+    if df.empty:
+        return ""
+    
+    html = """
+    <style>
+        .premium-table-container {
+            width: 100%;
+            margin: 15px 0;
+            overflow-x: auto;
+            border-radius: 12px;
+            border: 1px solid #1E293B;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+            background-color: #0F172A;
+        }
+        .premium-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'Cairo', 'Inter', sans-serif;
+            text-align: center;
+        }
+        .premium-table th {
+            background: linear-gradient(135deg, #1E293B, #0F172A) !important;
+            color: #00FFCC !important;
+            font-weight: 700 !important;
+            padding: 14px 16px !important;
+            font-size: 13px !important;
+            border-bottom: 2px solid #334155 !important;
+            text-shadow: 0px 1px 2px rgba(0,0,0,0.5);
+            white-space: nowrap;
+        }
+        .premium-table td {
+            padding: 12px 16px !important;
+            color: #F8FAFC !important;
+            font-size: 13px !important;
+            border-bottom: 1px solid #1E293B !important;
+            vertical-align: middle;
+        }
+        .premium-table tr:hover {
+            background-color: #1E293B !important;
+            cursor: pointer;
+        }
+        .premium-table tr:last-child td {
+            border-bottom: none !important;
+        }
+        .badge-green {
+            background-color: rgba(16, 185, 129, 0.15);
+            color: #10B981;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: bold;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            display: inline-block;
+        }
+        .badge-red {
+            background-color: rgba(239, 68, 68, 0.15);
+            color: #EF4444;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: bold;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            display: inline-block;
+        }
+        .badge-gold {
+            background-color: rgba(245, 158, 11, 0.15);
+            color: #F59E0B;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: bold;
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            display: inline-block;
+        }
+        .badge-blue {
+            background-color: rgba(59, 130, 246, 0.15);
+            color: #3B82F6;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: bold;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            display: inline-block;
+        }
+        .badge-purple {
+            background-color: rgba(139, 92, 246, 0.15);
+            color: #8B5CF6;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: bold;
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            display: inline-block;
+        }
+    </style>
+    <div class="premium-table-container">
+        <table class="premium-table">
+            <thead>
+                <tr>
+    """
+    for col in df.columns:
+        html += f"<th>{col}</th>"
+    html += "</tr></thead><tbody>"
+    
+    for _, row in df.iterrows():
+        html += "<tr>"
+        for col in df.columns:
+            val = str(row[col])
+            if "🟢" in val or "آمن" in val or "نجاح" in val or "شراء" in val:
+                html += f"<td><span class='badge-green'>{val}</span></td>"
+            elif "🔴" in val or "🚨" in val or "خطر" in val or "فشل" in val or "تجنب" in val:
+                html += f"<td><span class='badge-red'>{val}</span></td>"
+            elif "🔥" in val:
+                html += f"<td><span class='badge-gold'>{val}</span></td>"
+            elif "⚡" in val or "M" in val or "%" in val:
+                html += f"<td><span class='badge-blue'>{val}</span></td>"
+            elif "🔮" in val or "💥" in val:
+                html += f"<td><span class='badge-purple'>{val}</span></td>"
+            else:
+                html += f"<td>{val}</td>"
+        html += "</tr>"
+    html += "</tbody></table></div>"
+    return html
+
+
 st.markdown('<h1 class="title-header">🚀 رادار الأسهم الأمريكية: منصة التحليل الكمي ورصد شذوذ السيولة</h1>', unsafe_allow_html=True)
 
 # 2. تهيئة حالات الجلسة (Session States)
@@ -328,7 +452,7 @@ if active_halts:
         })
         
     df_halts = pd.DataFrame(halts_data)
-    st.dataframe(df_halts, use_container_width=True, hide_index=True)
+    st.markdown(render_premium_table(df_halts), unsafe_allow_html=True)
 else:
     st.info("⏳ لا توجد أسهم موقوفة عن التداول حالياً في ناسداك.")
 
@@ -406,7 +530,8 @@ def run_session_pipeline(session_name):
                         "prev_rvol": 1.0, 
                         "prev_change": 0.0,
                         "float_shares_m": 10.0,
-                        "short_percent": 0.0
+                        "short_percent": 0.0,
+                        "squeeze_score": 0
                     })
                     
                     ml_prob = ml_classifier.predict_probability(
@@ -469,6 +594,7 @@ def run_session_pipeline(session_name):
                         "Is_Dilution": is_dilution,
                         "Float_M": f_info["float_shares_m"],
                         "Short_Pct": f_info["short_percent"],
+                        "Squeeze_Score": f_info.get("squeeze_score", 0),
                         "Matches": details
                     })
                 except Exception as e:
@@ -607,10 +733,11 @@ def run_session_pipeline(session_name):
                     df_exp_display["نسبة الشورت"] = df_exp_display["Short_Pct"].apply(lambda x: f"{x:.1f}%")
                     df_exp_display["حالة الإيقاف"] = df_exp_display.apply(lambda r: f"🚨 موقوف ({r['Halt_Reason']})" if r["Is_Halted"] else "🟢 نشط", axis=1)
                     df_exp_display["تحذير التخفيف"] = df_exp_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
+                    df_exp_display["مؤشر الضغط"] = df_exp_display["Squeeze_Score"].apply(lambda x: f"💥 {x}%" if x >= 80 else f"⚡ {x}%" if x >= 50 else f"🟢 {x}%")
                     
-                    df_exp_table = df_exp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة الإيقاف", "تحذير التخفيف", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
-                    df_exp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة التداول", "التخفيف (Dilution)", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
-                    st.dataframe(df_exp_table, use_container_width=True, hide_index=True)
+                    df_exp_table = df_exp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة الإيقاف", "تحذير التخفيف", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
+                    df_exp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة التداول", "التخفيف (Dilution)", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
+                    st.markdown(render_premium_table(df_exp_table), unsafe_allow_html=True)
                 else:
                     st.info("ℹ️ لا توجد حالياً أسهم مطابقة لمعايير الانفجار السعري الصارمة في هذه اللحظة (RVOL >= 4.0, Float <= 15M, Short >= 10%).")
                     
@@ -629,10 +756,11 @@ def run_session_pipeline(session_name):
                     df_scalp_display["الأسهم الحرة"] = df_scalp_display["Float_M"].apply(lambda x: f"{x:.1f}M")
                     df_scalp_display["حالة الإيقاف"] = df_scalp_display.apply(lambda r: f"🚨 موقوف ({r['Halt_Reason']})" if r["Is_Halted"] else "🟢 نشط", axis=1)
                     df_scalp_display["تحذير التخفيف"] = df_scalp_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
+                    df_scalp_display["مؤشر الضغط"] = df_scalp_display["Squeeze_Score"].apply(lambda x: f"💥 {x}%" if x >= 80 else f"⚡ {x}%" if x >= 50 else f"🟢 {x}%")
                     
-                    df_scalp_table = df_scalp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "حالة الإيقاف", "تحذير التخفيف", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
-                    df_scalp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "حالة التداول", "التخفيف (Dilution)", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
-                    st.dataframe(df_scalp_table, use_container_width=True, hide_index=True)
+                    df_scalp_table = df_scalp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "حالة الإيقاف", "تحذير التخفيف", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
+                    df_scalp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "حالة التداول", "التخفيف (Dilution)", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
+                    st.markdown(render_premium_table(df_scalp_table), unsafe_allow_html=True)
                 else:
                     st.info("ℹ️ لا توجد حالياً أسهم نشطة للمضاربة السريعة اليومية.")
                 
