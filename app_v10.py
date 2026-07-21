@@ -425,8 +425,8 @@ def run_session_pipeline(session_name):
                     is_halted = sym in active_halts
                     halt_reason = active_halts[sym] if is_halted else ""
                     
-                    # فحص الإيداعات والتخفيف والملكية القانونية عبر SEC فقط للأسهم المرشحة لتفادي بطء الاستدعاء
-                    is_candidate = (score >= 80) or (price <= 10.0 and change >= 4.0 and rvol >= 2.5)
+                    # فحص الإيداعات والتخفيف والملكية القانونية عبر SEC فقط للأسهم المرشحة للانفجارات عالية اليقين لتفادي البطء والتعليق
+                    is_candidate = (score >= 80) and (rvol >= 3.0)
                     sec_tags = "لا يوجد"
                     is_dilution = False
                     if is_candidate:
