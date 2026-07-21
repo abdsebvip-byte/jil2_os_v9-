@@ -452,6 +452,23 @@ if active_halts:
         })
         
     df_halts = pd.DataFrame(halts_data)
+    
+    # 💥 بطاقة التوصية الذهبية للسهم المتصدر عند الاستئناف
+    buy_candidates = [h for h in halts_data if "🟢" in h["التوجيه المباشر"]]
+    if buy_candidates:
+        buy_candidates = sorted(buy_candidates, key=lambda x: float(x["احتمالية الانفجار"].replace("🔮", "").replace("%", "").strip()), reverse=True)
+        top_halt = buy_candidates[0]
+        st.markdown(f"""
+        <div class="signal-card">
+            <h2>🎯 توصية شراء عاجلة عند الاستئناف: السهم المتصدر `{top_halt['رمز السهم']}`</h2>
+            <p>🔄 <b>سبب الإيقاف:</b> {top_halt['سبب الإيقاف']}</p>
+            <p>🔮 <b>احتمالية الانفجار بالتنبؤ (ML):</b> {top_halt['احتمالية الانفجار']}</p>
+            <h3 style="color:#00FFCC !important;">🎯 نقطة الدخول المقترحة: {top_halt['نقطة الدخول المقترحة']}</h3>
+            <p>💰 <b>الهدف المقترح:</b> {top_halt['الهدف الربحي المقترح']} | 🛡️ <b>وقف الخسارة:</b> {top_halt['وقف الخسارة المقترح']}</p>
+            <p>⚠️ <b>التوجيه المباشر:</b> يرجى إدخال أمر شراء بسعر محدد (Limit Order) لتجنب الانزلاق السعري عند فتح التداول.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
     st.markdown(render_premium_table(df_halts), unsafe_allow_html=True)
 else:
     st.info("⏳ لا توجد أسهم موقوفة عن التداول حالياً في ناسداك.")
