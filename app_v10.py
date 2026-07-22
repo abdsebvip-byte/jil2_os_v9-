@@ -796,22 +796,21 @@ def run_session_pipeline(session_name):
                     (df_opportunities["Short_Pct"] >= 10.0)
                 ].copy()
                 
+                def get_direct_action(r):
+                    if r["Is_Dilution"]:
+                        return "🔴 تجنب (🚨 تخفيف S-1)"
+                    if r["Change_%"] > 40.0:
+                        return "🔴 تجنب (🚨 صعود فجوة)"
+                    if r["Conviction_Score"] >= 90 and r["ML_Probability"] >= 70.0:
+                        return "🟢 شراء فوري"
+                    if r["Conviction_Score"] >= 80 and r["ML_Probability"] >= 60.0:
+                        return "🟢 شراء تدريجي"
+                    if r["Conviction_Score"] >= 75 and r["RVOL"] >= 2.5:
+                        return "⚡ مضاربة سريعة"
+                    return "🔴 مراقبة فقط"
+
                 if not df_explosive.empty:
                     df_exp_display = df_explosive.copy()
-                    
-                    def get_direct_action(r):
-                        if r["Is_Dilution"]:
-                            return "🔴 تجنب (🚨 تخفيف S-1)"
-                        if r["Change_%"] > 40.0:
-                            return "🔴 تجنب (🚨 صعود فجوة)"
-                        if r["Conviction_Score"] >= 90 and r["ML_Probability"] >= 70.0:
-                            return "🟢 شراء فوري"
-                        if r["Conviction_Score"] >= 80 and r["ML_Probability"] >= 60.0:
-                            return "🟢 شراء تدريجي"
-                        if r["Conviction_Score"] >= 75 and r["RVOL"] >= 2.5:
-                            return "⚡ مضاربة سريعة"
-                        return "🔴 مراقبة فقط"
-                        
                     df_exp_display["التوجيه المباشر"] = df_exp_display.apply(get_direct_action, axis=1)
                     df_exp_display["تطابق الخوارزمية"] = df_exp_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%")
                     df_exp_display["احتمالية الانفجار (ML)"] = df_exp_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
