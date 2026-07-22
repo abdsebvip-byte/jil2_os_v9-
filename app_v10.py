@@ -799,6 +799,21 @@ def run_session_pipeline(session_name):
                 
                 if not df_explosive.empty:
                     df_exp_display = df_explosive.copy()
+                    
+                    def get_direct_action(r):
+                        if r["Is_Dilution"]:
+                            return "🔴 تجنب (🚨 تخفيف S-1)"
+                        if r["Change_%"] > 40.0:
+                            return "🔴 تجنب (🚨 صعود فجوة)"
+                        if r["Conviction_Score"] >= 90 and r["ML_Probability"] >= 70.0:
+                            return "🟢 شراء فوري"
+                        if r["Conviction_Score"] >= 80 and r["ML_Probability"] >= 60.0:
+                            return "🟢 شراء تدريجي"
+                        if r["Conviction_Score"] >= 75 and r["RVOL"] >= 2.5:
+                            return "⚡ مضاربة سريعة"
+                        return "🔴 مراقبة فقط"
+                        
+                    df_exp_display["التوجيه المباشر"] = df_exp_display.apply(get_direct_action, axis=1)
                     df_exp_display["تطابق الخوارزمية"] = df_exp_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%")
                     df_exp_display["احتمالية الانفجار (ML)"] = df_exp_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
                     df_exp_display["الأسهم الحرة"] = df_exp_display["Float_M"].apply(lambda x: f"{x:.1f}M")
@@ -807,8 +822,8 @@ def run_session_pipeline(session_name):
                     df_exp_display["تحذير التخفيف"] = df_exp_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
                     df_exp_display["مؤشر الضغط"] = df_exp_display["Squeeze_Score"].apply(lambda x: f"💥 {x}%" if x >= 80 else f"⚡ {x}%" if x >= 50 else f"🟢 {x}%")
                     
-                    df_exp_table = df_exp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة الإيقاف", "تحذير التخفيف", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
-                    df_exp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة التداول", "التخفيف (Dilution)", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
+                    df_exp_table = df_exp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة الإيقاف", "تحذير التخفيف", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "التوجيه المباشر"]].copy()
+                    df_exp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة التداول", "التخفيف (Dilution)", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "التوجيه المباشر"]
                     st.markdown(render_premium_table(df_exp_table), unsafe_allow_html=True)
                 else:
                     st.info("ℹ️ لا توجد حالياً أسهم مطابقة لمعايير الانفجار السعري الصارمة في هذه اللحظة (RVOL >= 4.0, Float <= 15M, Short >= 10%).")
@@ -823,6 +838,7 @@ def run_session_pipeline(session_name):
                 
                 if not df_scalp.empty:
                     df_scalp_display = df_scalp.copy()
+                    df_scalp_display["التوجيه المباشر"] = df_scalp_display.apply(get_direct_action, axis=1)
                     df_scalp_display["تطابق الخوارزمية"] = df_scalp_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%" if x >= 80 else f"⚡ {x}%")
                     df_scalp_display["احتمالية الانفجار (ML)"] = df_scalp_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
                     df_scalp_display["الأسهم الحرة"] = df_scalp_display["Float_M"].apply(lambda x: f"{x:.1f}M")
@@ -830,8 +846,8 @@ def run_session_pipeline(session_name):
                     df_scalp_display["تحذير التخفيف"] = df_scalp_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
                     df_scalp_display["مؤشر الضغط"] = df_scalp_display["Squeeze_Score"].apply(lambda x: f"💥 {x}%" if x >= 80 else f"⚡ {x}%" if x >= 50 else f"🟢 {x}%")
                     
-                    df_scalp_table = df_scalp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "حالة الإيقاف", "تحذير التخفيف", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]].copy()
-                    df_scalp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "حالة التداول", "التخفيف (Dilution)", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية"]
+                    df_scalp_table = df_scalp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "حالة الإيقاف", "تحذير التخفيف", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "التوجيه المباشر"]].copy()
+                    df_scalp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "حالة التداول", "التخفيف (Dilution)", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "التوجيه المباشر"]
                     st.markdown(render_premium_table(df_scalp_table), unsafe_allow_html=True)
                 else:
                     st.info("ℹ️ لا توجد حالياً أسهم نشطة للمضاربة السريعة اليومية.")
