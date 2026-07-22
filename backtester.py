@@ -232,7 +232,8 @@ class QuantBacktester:
             
             if available_slots > 0:
                 for sym in available_symbols:
-                           # تطبيق خوارزمية التجميع الصامت التاريخية المحدثة
+                    try:
+                        # تطبيق خوارزمية التجميع الصامت التاريخية المحدثة
                         if strategy_type == "ACCUMULATION":
                             ticker_df = stock_hist.tail(10) # فحص تماسك 10 أيام
                             close_prev = ticker_df['close'].iloc[:-1]

@@ -413,124 +413,9 @@ est_tz = pytz.timezone('US/Eastern')
 now_est = datetime.now(est_tz)
 st.write(f"⏱️ **آخر تحديث للرادار:** `{now_est.strftime('%H:%M:%S')} EST` | **تأخير البيانات:** `0 ثوانٍ (بيانات لحظية 🟢)`")
 
-# عرض جدول رصد إيقاف التداول اللحظي (Nasdaq Halts Scan)
-st.markdown("### 🚨 شاشة صيد صفقات الاستئناف (Nasdaq Halts Trading Matrix)")
-active_halts = get_active_halts()
-
-if active_halts:
-    halt_symbols = list(active_halts.keys())
-    halts_data = []
-    
-    # Retrieve features and ML probability for these symbols
-    from intraday_tracker import get_historical_features
-    from ml_classifier import QuantMLClassifier
-    from yahooquery import Ticker
-    
-    # Fetch current price in bulk (blazing fast, no progress bar, no timeout hangs)
-    try:
-        tickers = Ticker(halt_symbols)
-        prices_data = tickers.price
-    except:
-        prices_data = {}
-        
-    hist_features_halts = get_historical_features(halt_symbols)
-    ml_classifier = QuantMLClassifier()
-    
-    for sym in halt_symbols:
-        reason = active_halts[sym]
-        price = 5.0
-        change = 0.0
-        try:
-            if sym in prices_data and isinstance(prices_data[sym], dict):
-                price = float(prices_data[sym].get("regularMarketPrice") or 5.0)
-                change_val = prices_data[sym].get("regularMarketChangePercent")
-                if change_val is not None:
-                    change = float(change_val) * 100.0
-        except:
-            price = 5.0
-            
-        f_info = hist_features_halts.get(sym) if isinstance(hist_features_halts, dict) else None
-        if not isinstance(f_info, dict):
-            f_info = {
-                "volatility_10d": 5.0,
-                "prev_rvol": 1.0,
-                "prev_change": 0.0,
-                "float_shares_m": 10.0,
-                "short_percent": 0.0
-            }
-        
-        # Calculate ML probability using the actual change percent of the halted symbol
-        ml_prob = ml_classifier.predict_probability(
-            price=price,
-            change=change,
-            rvol=f_info.get("prev_rvol", 1.0),
-            volatility_10d=f_info.get("volatility_10d", 5.0),
-            prev_rvol=f_info.get("prev_rvol", 1.0),
-            prev_change=f_info.get("prev_change", 0.0),
-            float_shares_m=f_info.get("float_shares_m", 10.0),
-            short_percent=f_info.get("short_percent", 0.0)
-        )
-        
-        # Always calculate suggested trade parameters so the user is never left with dashed values
-        entry_price_val = price * 1.01
-        target_price_val = price * 1.12
-        stop_price_val = price * 0.95
-        
-        entry_str = f"${entry_price_val:.2f} (عند الاستئناف)"
-        target_str = f"${target_price_val:.2f} (+12%)"
-        stop_str = f"${stop_price_val:.2f} (-5%)"
-        
-        # Optimize: ONLY query SEC filings news if ML probability is promising (>= 60.0%) to prevent freezes
-        is_dilution = False
-        sec_tags = "لا يوجد"
-        if ml_prob >= 60.0:
-            sec_sentiment = get_sec_filings_sentiment(sym)
-            is_dilution = sec_sentiment["dilution_warning"]
-            sec_tags = ", ".join(sec_sentiment["details"]) if sec_sentiment["details"] else "لا يوجد"
-            
-        if is_dilution:
-            decision = "🔴 تجنب (🚨 تخفيف S-1)"
-        elif ml_prob >= 65.0:
-            decision = "🟢 شراء عاجل"
-        else:
-            decision = "🔴 تجنب (مخاطرة عالية/ضعف السيولة)"
-            
-        halts_data.append({
-            "رمز السهم": sym,
-            "سبب الإيقاف": f"LULD ({reason})",
-            "احتمالية الانفجار": f"🔮 {ml_prob:.1f}%",
-            "التوجيه المباشر": decision,
-            "نقطة الدخول المقترحة": entry_str,
-            "الهدف الربحي المقترح": target_str,
-            "وقف الخسارة المقترح": stop_str
-        })
-        
-    df_halts = pd.DataFrame(halts_data)
-    
-    # 💥 بطاقة التوصية الذهبية للسهم المتصدر عند الاستئناف
-    buy_candidates = [h for h in halts_data if "🟢" in h["التوجيه المباشر"]]
-    if buy_candidates:
-        buy_candidates = sorted(buy_candidates, key=lambda x: float(x["احتمالية الانفجار"].replace("🔮", "").replace("%", "").strip()), reverse=True)
-        top_halt = buy_candidates[0]
-        st.markdown(f"""
-        <div class="signal-card">
-            <h2>🎯 توصية شراء عاجلة عند الاستئناف: السهم المتصدر `{top_halt['رمز السهم']}`</h2>
-            <p>🔄 <b>سبب الإيقاف:</b> {top_halt['سبب الإيقاف']}</p>
-            <p>🔮 <b>احتمالية الانفجار بالتنبؤ (ML):</b> {top_halt['احتمالية الانفجار']}</p>
-            <h3 style="color:#00FFCC !important;">🎯 نقطة الدخول المقترحة: {top_halt['نقطة الدخول المقترحة']}</h3>
-            <p>💰 <b>الهدف المقترح:</b> {top_halt['الهدف الربحي المقترح']} | 🛡️ <b>وقف الخسارة:</b> {top_halt['وقف الخسارة المقترح']}</p>
-            <p>⚠️ <b>التوجيه المباشر:</b> يرجى إدخال أمر شراء بسعر محدد (Limit Order) لتجنب الانزلاق السعري عند فتح التداول.</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    st.markdown(render_premium_table(df_halts), unsafe_allow_html=True)
-else:
-    st.info("⏳ لا توجد أسهم موقوفة عن التداول حالياً في ناسداك.")
-
-st.write("---")
-
 # 4. علامات التبويب الموزعة للفترات
-t1, t2, t3, t4, t5, t6 = st.tabs([
+t_halts, t1, t2, t3, t4, t5, t6 = st.tabs([
+    "🚨 صفقات الاستئناف (LULD Halts)",
     "🛰️ جلسة ما قبل السوق", 
     "📊 الجلسة الرسمية للسوق", 
     "🌙 جلسة بعد الإغلاق", 
@@ -538,6 +423,120 @@ t1, t2, t3, t4, t5, t6 = st.tabs([
     "🏆 سجل صيد اليقين التراكمي",
     "📊 محرك الاختبار التاريخي"
 ])
+
+with t_halts:
+    st.markdown("### 🚨 شاشة صيد صفقات الاستئناف (Nasdaq Halts Trading Matrix)")
+    active_halts = get_active_halts()
+
+    if active_halts:
+        halt_symbols = list(active_halts.keys())
+        halts_data = []
+        
+        # Retrieve features and ML probability for these symbols
+        from intraday_tracker import get_historical_features
+        from ml_classifier import QuantMLClassifier
+        from yahooquery import Ticker
+        
+        # Fetch current price in bulk (blazing fast, no progress bar, no timeout hangs)
+        try:
+            tickers = Ticker(halt_symbols)
+            prices_data = tickers.price
+        except:
+            prices_data = {}
+            
+        hist_features_halts = get_historical_features(halt_symbols)
+        ml_classifier = QuantMLClassifier()
+        
+        for sym in halt_symbols:
+            reason = active_halts[sym]
+            price = 5.0
+            change = 0.0
+            try:
+                if sym in prices_data and isinstance(prices_data[sym], dict):
+                    price = float(prices_data[sym].get("regularMarketPrice") or 5.0)
+                    change_val = prices_data[sym].get("regularMarketChangePercent")
+                    if change_val is not None:
+                        change = float(change_val) * 100.0
+            except:
+                price = 5.0
+                
+            f_info = hist_features_halts.get(sym) if isinstance(hist_features_halts, dict) else None
+            if not isinstance(f_info, dict):
+                f_info = {
+                    "volatility_10d": 5.0,
+                    "prev_rvol": 1.0,
+                    "prev_change": 0.0,
+                    "float_shares_m": 10.0,
+                    "short_percent": 0.0
+                }
+            
+            # Calculate ML probability using the actual change percent of the halted symbol
+            ml_prob = ml_classifier.predict_probability(
+                price=price,
+                change=change,
+                rvol=f_info.get("prev_rvol", 1.0),
+                volatility_10d=f_info.get("volatility_10d", 5.0),
+                prev_rvol=f_info.get("prev_rvol", 1.0),
+                prev_change=f_info.get("prev_change", 0.0),
+                float_shares_m=f_info.get("float_shares_m", 10.0),
+                short_percent=f_info.get("short_percent", 0.0)
+            )
+            
+            # Always calculate suggested trade parameters so the user is never left with dashed values
+            entry_price_val = price * 1.01
+            target_price_val = price * 1.12
+            stop_price_val = price * 0.95
+            
+            entry_str = f"${entry_price_val:.2f} (عند الاستئناف)"
+            target_str = f"${target_price_val:.2f} (+12%)"
+            stop_str = f"${stop_price_val:.2f} (-5%)"
+            
+            # Optimize: ONLY query SEC filings news if ML probability is promising (>= 60.0%) to prevent freezes
+            is_dilution = False
+            sec_tags = "لا يوجد"
+            if ml_prob >= 60.0:
+                sec_sentiment = get_sec_filings_sentiment(sym)
+                is_dilution = sec_sentiment["dilution_warning"]
+                sec_tags = ", ".join(sec_sentiment["details"]) if sec_sentiment["details"] else "لا يوجد"
+                
+            if is_dilution:
+                decision = "🔴 تجنب (🚨 تخفيف S-1)"
+            elif ml_prob >= 65.0:
+                decision = "🟢 شراء عاجل"
+            else:
+                decision = "🔴 تجنب (مخاطرة عالية/ضعف السيولة)"
+                
+            halts_data.append({
+                "رمز السهم": sym,
+                "سبب الإيقاف": f"LULD ({reason})",
+                "احتمالية الانفجار": f"🔮 {ml_prob:.1f}%",
+                "التوجيه المباشر": decision,
+                "نقطة الدخول المقترحة": entry_str,
+                "الهدف الربحي المقترح": target_str,
+                "وقف الخسارة المقترح": stop_str
+            })
+            
+        df_halts = pd.DataFrame(halts_data)
+        
+        # 💥 بطاقة التوصية الذهبية للسهم المتصدر عند الاستئناف
+        buy_candidates = [h for h in halts_data if "🟢" in h["التوجيه المباشر"]]
+        if buy_candidates:
+            buy_candidates = sorted(buy_candidates, key=lambda x: float(x["احتمالية الانفجار"].replace("🔮", "").replace("%", "").strip()), reverse=True)
+            top_halt = buy_candidates[0]
+            st.markdown(f"""
+            <div class="signal-card">
+                <h2>🎯 توصية شراء عاجلة عند الاستئناف: السهم المتصدر `{top_halt['رمز السهم']}`</h2>
+                <p>🔄 <b>سبب الإيقاف:</b> {top_halt['سبب الإيقاف']}</p>
+                <p>🔮 <b>احتمالية الانفجار بالتنبؤ (ML):</b> {top_halt['احتمالية الانفجار']}</p>
+                <h3 style="color:#00FFCC !important;">🎯 نقطة الدخول المقترحة: {top_halt['نقطة الدخول المقترحة']}</h3>
+                <p>💰 <b>الهدف المقترح:</b> {top_halt['الهدف الربحي المقترح']} | 🛡️ <b>وقف الخسارة:</b> {top_halt['وقف الخسارة المقترح']}</p>
+                <p>⚠️ <b>التوجيه المباشر:</b> يرجى إدخال أمر شراء بسعر محدد (Limit Order) لتجنب الانزلاق السعري عند فتح التداول.</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        st.markdown(render_premium_table(df_halts), unsafe_allow_html=True)
+    else:
+        st.info("⏳ لا توجد أسهم موقوفة عن التداول حالياً في ناسداك.")
 
 def run_session_pipeline(session_name):
     st.markdown(f"🔬 **حالة المعالجة الحالية:** جاري مسح وتصفية سيولة جلسة `{session_name}`...")
