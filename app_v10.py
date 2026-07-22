@@ -4,6 +4,21 @@ import pandas as pd
 import asyncio
 import logging
 import requests
+import importlib
+import scanner
+import intelligence
+import news_radar
+import notifier
+import alerts_tracker
+import database
+
+importlib.reload(scanner)
+importlib.reload(intelligence)
+importlib.reload(news_radar)
+importlib.reload(notifier)
+importlib.reload(alerts_tracker)
+importlib.reload(database)
+
 from scanner import FreeMarketScanner
 from intelligence import QuantIntelligence
 from news_radar import SECNewsRadar
