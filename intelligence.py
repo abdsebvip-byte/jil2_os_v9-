@@ -135,12 +135,23 @@ class QuantIntelligence:
         else:
             details["RVOL_Acceleration"] = False
 
-        # الطبقة 5: تدفق كتل الحيتان الافتراضي (RVOL >= 2.5x)
-        if rvol >= 2.5:
-            score += 15
-            details["Whale_Block"] = True
+        # الطبقة 5: تدفق كتل الحيتان الفعلي (Value.Traded >= $1.5M AND Price >= VWAP)
+        value_traded = float(quote.get("value_traded", 0.0))
+        vwap = float(quote.get("vwap", 0.0))
+        
+        if value_traded > 0.0 and vwap > 0.0:
+            if value_traded >= 1500000.0 and price >= vwap:
+                score += 15
+                details["Whale_Block"] = True
+            else:
+                details["Whale_Block"] = False
         else:
-            details["Whale_Block"] = False
+            # الارتداد الاحتياطي لياهو فاينانس
+            if rvol >= 2.5:
+                score += 15
+                details["Whale_Block"] = True
+            else:
+                details["Whale_Block"] = False
 
         # الطبقة 6: عدم توازن السيولة OBI (تحقق الشراء التراكمي)
         bid_size = float(quote.get("bidSize", 0.0))

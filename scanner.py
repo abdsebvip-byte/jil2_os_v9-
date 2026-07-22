@@ -44,37 +44,117 @@ class FreeMarketScanner:
 
     def fetch_all_us_symbols(self):
         """
-        Pull all active tickers from multiple Yahoo Finance screeners to expand coverage.
-        Queries 100% valid Yahoo screeners.
+        Pull all active tickers from TradingView's real-time API (NASDAQ/NYSE/AMEX).
+        Falls back to Yahoo Finance screeners on failure (Zero Latency + High Stability).
         """
-        screeners_to_query = [
-            'day_gainers', 
-            'most_actives', 
-            'small_cap_gainers'
-        ]
+        import requests
+        
+        url = "https://scanner.tradingview.com/america/scan"
+        payload = {
+            "filter": [
+                {"left": "close", "operation": "egreater", "right": 0.1},
+                {"left": "close", "operation": "eless", "right": 20.0},
+                {"left": "change", "operation": "egreater", "right": 2.0},
+                {"left": "volume", "operation": "egreater", "right": 20000},
+                {"left": "exchange", "operation": "in_range", "right": ["NASDAQ", "NYSE", "AMEX"]}
+            ],
+            "options": {"active_symbols_only": True},
+            "markets": ["america"],
+            "symbols": {"query": {"types": []}, "tickers": []},
+            "columns": [
+                "name",
+                "close",
+                "change",
+                "volume",
+                "relative_volume_10d_active",
+                "float_shares_outstanding",
+                "average_volume_30d_calc",
+                "VWAP",
+                "Value.Traded"
+            ],
+            "sort": {"sortBy": "change", "sortOrder": "desc"},
+            "range": [0, 100]
+        }
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Content-Type": "application/json"
+        }
+        
         try:
-            data = self.screener.get_screeners(screen_ids=screeners_to_query, count=150)
-            quotes = []
-            seen_symbols = set()
-            
-            for key in screeners_to_query:
-                screener_data = data.get(key, {})
-                if isinstance(screener_data, dict):
-                    raw_quotes = screener_data.get('quotes', [])
-                    for q in raw_quotes:
-                        symbol = q.get('symbol')
-                        if symbol and symbol.isalpha() and symbol not in seen_symbols:
-                            seen_symbols.add(symbol)
-                            quotes.append(q)
-            
-            self.cached_quotes = quotes
-            symbols = list(seen_symbols)
-            print(f"fetch_all_us_symbols: Found {len(symbols)} unique active stocks moving in the market.")
-            return symbols
-        except Exception as e:
-            print(f"fetch_all_us_symbols: Screener query failed: {str(e)}")
-            self.cached_quotes = []
-            return ["AMC", "GME", "SNDL", "NIO", "PLTR", "SOFI", "LCID", "MARA", "RIOT"]
+            print("fetch_all_us_symbols: Fetching real-time gainers from TradingView API...")
+            response = requests.post(url, json=payload, headers=headers, timeout=8)
+            if response.status_code == 200:
+                data = response.json()
+                rows = data.get("data", [])
+                quotes = []
+                seen_symbols = set()
+                
+                for item in rows:
+                    sym = item.get("s", "")
+                    d = item.get("d", [])
+                    if not sym or len(d) < 9:
+                        continue
+                    ticker = sym.split(":")[-1]
+                    if ticker and ticker.isalpha() and ticker not in seen_symbols:
+                        seen_symbols.add(ticker)
+                        
+                        # Map TradingView variables to simulated Yahoo quote format
+                        quotes.append({
+                            "symbol": ticker,
+                            "regularMarketPrice": float(d[1] or 0.0),
+                            "regularMarketChangePercent": float(d[2] or 0.0),
+                            "regularMarketVolume": float(d[3] or 0.0),
+                            "averageDailyVolume3Month": float(d[6] or 100000.0),
+                            "regularMarketPreviousClose": float(d[1] or 0.0) / (1.0 + (float(d[2] or 0.0) / 100.0)) if d[2] else float(d[1] or 0.0),
+                            "regularMarketOpen": float(d[1] or 0.0),
+                            "preMarketPrice": float(d[1] or 0.0),
+                            "preMarketChangePercent": float(d[2] or 0.0),
+                            "postMarketPrice": float(d[1] or 0.0),
+                            "postMarketChangePercent": float(d[2] or 0.0),
+                            "bid": float(d[1] or 0.0),
+                            "ask": float(d[1] or 0.0),
+                            "bidSize": 100.0,
+                            "askSize": 100.0,
+                            "vwap": float(d[7] or 0.0),
+                            "value_traded": float(d[8] or 0.0),
+                            "float_shares_outstanding": float(d[5] or 10000000.0)
+                        })
+                
+                self.cached_quotes = quotes
+                symbols = list(seen_symbols)
+                print(f"fetch_all_us_symbols (TradingView): Found {len(symbols)} real-time active stocks.")
+                return symbols
+            else:
+                print(f"fetch_all_us_symbols: TradingView returned status {response.status_code}. Reverting to Yahoo fallback...")
+                raise ValueError("TradingView API Down")
+        except Exception as tv_err:
+            print(f"fetch_all_us_symbols: TradingView query failed ({str(tv_err)}). Reverting to Yahoo Finance fallback...")
+            # Fallback to Yahoo screeners
+            screeners_to_query = ['day_gainers', 'most_actives', 'small_cap_gainers']
+            try:
+                data = self.screener.get_screeners(screen_ids=screeners_to_query, count=100)
+                quotes = []
+                seen_symbols = set()
+                
+                for key in screeners_to_query:
+                    screener_data = data.get(key, {})
+                    if isinstance(screener_data, dict):
+                        raw_quotes = screener_data.get('quotes', [])
+                        for q in raw_quotes:
+                            symbol = q.get('symbol')
+                            if symbol and symbol.isalpha() and symbol not in seen_symbols:
+                                seen_symbols.add(symbol)
+                                quotes.append(q)
+                
+                self.cached_quotes = quotes
+                symbols = list(seen_symbols)
+                print(f"fetch_all_us_symbols (Yahoo Fallback): Found {len(symbols)} active stocks.")
+                return symbols
+            except Exception as yf_err:
+                print(f"fetch_all_us_symbols: Yahoo Fallback failed too ({str(yf_err)}). Using offline hardcoded tickers.")
+                self.cached_quotes = []
+                return ["AMC", "GME", "SNDL", "NIO", "PLTR", "SOFI", "LCID", "MARA", "RIOT"]
 
     async def scan_entire_market(self):
         """
@@ -92,13 +172,16 @@ class FreeMarketScanner:
                 "postMarketChangePercent": q.get("postMarketChangePercent"),
                 "regularMarketVolume": q.get("regularMarketVolume", 0.0),
                 "averageDailyVolume3Month": q.get("averageDailyVolume3Month", 100000.0),
-                "marketState": q.get("marketState", ""),
+                "marketState": q.get("marketState", "REGULAR"),
                 "regularMarketOpen": q.get("regularMarketOpen", 0.0),
                 "regularMarketPreviousClose": q.get("regularMarketPreviousClose", 0.0),
                 "bid": q.get("bid", 0.0),
                 "ask": q.get("ask", 0.0),
                 "bidSize": q.get("bidSize", 0.0),
-                "askSize": q.get("askSize", 0.0)
+                "askSize": q.get("askSize", 0.0),
+                "vwap": q.get("vwap", 0.0),
+                "value_traded": q.get("value_traded", 0.0),
+                "float_shares_outstanding": q.get("float_shares_outstanding")
             })
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.02)
         return formatted_quotes

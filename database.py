@@ -85,6 +85,10 @@ class QuantDatabase:
                 cursor.execute("ALTER TABLE alerts_history ADD COLUMN status TEXT DEFAULT 'PENDING'")
             except:
                 pass
+            try:
+                cursor.execute("ALTER TABLE alerts_history ADD COLUMN initial_change REAL DEFAULT 0.0")
+            except:
+                pass
             
             # تهيئة الرصيد الافتراضي بـ 1000 دولار إذا لم يكن موجوداً
             cursor.execute("SELECT COUNT(*) FROM account_balance")
@@ -226,21 +230,21 @@ class QuantDatabase:
             """, (symbol, datetime.now().isoformat()))
             conn.commit()
 
-    def log_alert_history(self, symbol, price, score, alert_type, session="REGULAR_SESSION", target_percent=12.0, status="PENDING"):
+    def log_alert_history(self, symbol, price, score, alert_type, session="REGULAR_SESSION", target_percent=12.0, status="PENDING", initial_change=0.0):
         symbol = symbol.upper().strip()
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO alerts_history (symbol, sent_at, price, score, alert_type, session, target_percent, max_price_reached, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (symbol, datetime.now().isoformat(), float(price), float(score), str(alert_type), str(session), float(target_percent), float(price), str(status)))
+                INSERT INTO alerts_history (symbol, sent_at, price, score, alert_type, session, target_percent, max_price_reached, status, initial_change)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (symbol, datetime.now().isoformat(), float(price), float(score), str(alert_type), str(session), float(target_percent), float(price), str(status), float(initial_change)))
             conn.commit()
 
     def get_alerts_history(self, limit=50):
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT symbol, sent_at, price, score, alert_type, session, target_percent, max_price_reached, status 
+                SELECT symbol, sent_at, price, score, alert_type, session, target_percent, max_price_reached, status, initial_change
                 FROM alerts_history 
                 ORDER BY sent_at DESC 
                 LIMIT ?
@@ -255,7 +259,8 @@ class QuantDatabase:
                 "session": r[5] if r[5] else "REGULAR_SESSION",
                 "target_percent": r[6] if r[6] is not None else 12.0,
                 "max_price_reached": r[7] if r[7] is not None else r[2],
-                "status": r[8] if r[8] else "PENDING"
+                "status": r[8] if r[8] else "PENDING",
+                "initial_change": r[9] if r[9] is not None else 0.0
             } for r in rows]
 
     def get_pending_alerts(self):
@@ -285,5 +290,51 @@ class QuantDatabase:
                 WHERE id = ?
             """, (float(max_price), str(status), int(alert_id)))
             conn.commit()
+
+    def calculate_platform_efficiency(self):
+        """
+        Calculate platform's overall win rate and early catch efficiency over closed alerts.
+        - Win Rate: (SUCCESS alerts / closed alerts) * 100
+        - Early Catch Rate: (alerts caught with initial_change <= 7.0% / total alerts) * 100
+        - Overall Index: 0.6 * Win_Rate + 0.4 * Early_Catch_Rate
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get total closed alerts (SUCCESS or FAILED)
+            cursor.execute("SELECT COUNT(*) FROM alerts_history WHERE status IN ('SUCCESS', 'FAILED')")
+            closed_count = cursor.fetchone()[0]
+            
+            # Get success alerts
+            cursor.execute("SELECT COUNT(*) FROM alerts_history WHERE status = 'SUCCESS'")
+            success_count = cursor.fetchone()[0]
+            
+            # Get total alerts
+            cursor.execute("SELECT COUNT(*) FROM alerts_history")
+            total_count = cursor.fetchone()[0]
+            
+            # Get early catch count (caught when change <= 7.0% and > 0.0)
+            cursor.execute("SELECT COUNT(*) FROM alerts_history WHERE initial_change <= 7.0 AND initial_change > 0.0")
+            early_count = cursor.fetchone()[0]
+            
+            win_rate = (success_count / closed_count * 100.0) if closed_count > 0 else 0.0
+            early_rate = (early_count / total_count * 100.0) if total_count > 0 else 0.0
+            
+            # If no data exists yet, we default to 100.0 to avoid showing 0% to the user on day 1
+            if total_count == 0:
+                win_rate = 100.0
+                early_rate = 100.0
+                
+            overall_index = 0.6 * win_rate + 0.4 * early_rate
+            
+            return {
+                "total_alerts": total_count,
+                "closed_alerts": closed_count,
+                "success_alerts": success_count,
+                "early_alerts": early_count,
+                "win_rate": round(win_rate, 1),
+                "early_rate": round(early_rate, 1),
+                "overall_index": round(overall_index, 1)
+            }
 
 

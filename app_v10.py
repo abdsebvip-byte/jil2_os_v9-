@@ -290,6 +290,38 @@ def initialize_interactive_bot():
 
 bot_status = initialize_interactive_bot()
 
+# 📈 مؤشر كفاءة المنصة المطور (System Efficiency KPI Dashboard)
+st.sidebar.markdown("### 📈 كفاءة المنصة (Efficiency KPI)")
+try:
+    from database import QuantDatabase
+    db_kpi = QuantDatabase()
+    kpi = db_kpi.calculate_platform_efficiency()
+    
+    idx = kpi["overall_index"]
+    if idx >= 85.0:
+        quality_status = "🟢 ممتاز ومستقر جداً"
+        color = "#00FFCC"
+    elif idx >= 70.0:
+        quality_status = "🟢 جيد ومستقر"
+        color = "#3b82f6"
+    else:
+        quality_status = "🚨 بحاجة لتطوير وتدريب الـ ML"
+        color = "#FF3366"
+        
+    st.sidebar.markdown(f"""
+    <div style="background-color: #1e293b; padding: 15px; border-radius: 10px; border-left: 5px solid {color}; margin-bottom: 20px;">
+        <p style="color:#94a3b8; font-size: 13px; margin: 0; font-family: sans-serif;">الكفاءة الإجمالية للنظام:</p>
+        <h2 style="color:{color}; margin: 5px 0; font-size: 32px; font-family: sans-serif;">{idx}%</h2>
+        <p style="color:#e2e8f0; font-size: 13px; margin: 5px 0 0 0; font-family: sans-serif;">🔍 <b>الحالة:</b> {quality_status}</p>
+        <hr style="margin: 10px 0; border-color: #334155;"/>
+        <p style="color:#94a3b8; font-size: 12px; margin: 2px 0; font-family: sans-serif;">🎯 نسبة الأهداف (Win Rate): <b>{kpi['win_rate']}%</b></p>
+        <p style="color:#94a3b8; font-size: 12px; margin: 2px 0; font-family: sans-serif;">⚡ الكشف المبكر (&le;7%): <b>{kpi['early_rate']}%</b></p>
+        <p style="color:#94a3b8; font-size: 12px; margin: 2px 0; font-family: sans-serif;">📦 التنبيهات المغلقة: <b>{kpi['closed_alerts']}</b></p>
+    </div>
+    """, unsafe_allow_html=True)
+except Exception as kpi_err:
+    st.sidebar.error(f"فشل حساب مؤشر الكفاءة: {kpi_err}")
+
 # 2.1 إعداد شريط جانبي لأدوات التحكم والاختبار
 st.sidebar.markdown("### 🛠️ أدوات التحكم والربط")
 st.sidebar.write("استخدم هذا الزر لإرسال تنبيه عينة والتأكد من نجاح اتصال بوت تيليجرام بجوالك في أي وقت:")
@@ -701,7 +733,8 @@ def run_session_pipeline(session_name):
                             alert_type="شراء فوري بسعر السوق (طلب يدوي)",
                             session=session_name,
                             target_percent=target_pct,
-                            status="PENDING"
+                            status="PENDING",
+                            initial_change=top_stock['Change_%']
                         )
                         st.success("✅ تم إرسال إشارة التنبيه بنجاح إلى هاتفك عبر تيليجرام!")
                     else:

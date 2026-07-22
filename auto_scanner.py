@@ -181,7 +181,8 @@ def start_scheduler():
                                     alert_type=f"صفقة استئناف ({reason})",
                                     session=session,
                                     target_percent=target_pct,
-                                    status="PENDING"
+                                    status="PENDING",
+                                    initial_change=change
                                 )
                         except Exception as ex:
                             logging.warning(f"Error checking halt symbol {sym} price details: {ex}")
@@ -303,7 +304,8 @@ def start_scheduler():
                                     alert_type="شراء فوري بسعر السوق (رادار)",
                                     session=session,
                                     target_percent=target_pct,
-                                    status="PENDING"
+                                    status="PENDING",
+                                    initial_change=change
                                 )
                                 
                     except Exception as e:
