@@ -53,6 +53,13 @@ st.set_page_config(page_title="منظومة رادار السيولة الترا
 st.markdown("""
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Cairo:wght@300;400;600;700&display=swap" rel="stylesheet">
 <style>
+    /* منع تعتيم وتبييض الصفحة تماماً أثناء تحديث البيانات لضمان تباين ووضوح ألوان الجداول والأسهم */
+    .stApp [data-stale="true"], div[data-stale="true"] {
+        opacity: 1.0 !important;
+        filter: none !important;
+        transition: none !important;
+    }
+
     /* تطبيق الألوان والخطوط للوحة التحكم */
     .main { 
         background-color: #080b10; 
