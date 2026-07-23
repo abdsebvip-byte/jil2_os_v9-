@@ -135,12 +135,14 @@ class QuantIntelligence:
         else:
             details["RVOL_Acceleration"] = False
 
-        # الطبقة 5: تدفق كتل الحيتان الفعلي (Value.Traded >= $1.5M AND Price >= VWAP)
+        # الطبقة 5: تدفق كتل الحيتان الفعلي (Value.Traded >= $1.5M/500k AND Price >= VWAP)
         value_traded = float(quote.get("value_traded", 0.0))
         vwap = float(quote.get("vwap", 0.0))
         
+        whale_limit = 500000.0 if session in ["PRE_MARKET", "AFTER_HOURS"] else 1500000.0
+        
         if value_traded > 0.0 and vwap > 0.0:
-            if value_traded >= 1500000.0 and price >= vwap:
+            if value_traded >= whale_limit and price >= vwap:
                 score += 15
                 details["Whale_Block"] = True
             else:
