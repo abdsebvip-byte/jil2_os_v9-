@@ -27,9 +27,9 @@ def update_pending_signals_status(db):
         for p in pending:
             sym = p["symbol"]
             alert_id = p["id"]
-            entry_price = float(p["price"])
-            target_pct = float(p["target_percent"])
-            current_max = float(p["max_price_reached"])
+            entry_price = float(p["price"] if p["price"] is not None else 0.0)
+            target_pct = float(p["target_percent"] if p["target_percent"] is not None else 12.0)
+            current_max = float(p["max_price_reached"] if p["max_price_reached"] is not None else entry_price)
             
             if sym in price_data and isinstance(price_data[sym], dict):
                 p_info = price_data[sym]
