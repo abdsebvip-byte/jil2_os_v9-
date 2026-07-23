@@ -90,6 +90,20 @@ class QuantDatabase:
             except:
                 pass
             
+            # جدول سجلات أداء التحسين الذاتي للذكاء الاصطناعي
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS optimization_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    optimized_at TEXT NOT NULL,
+                    missed_gainers TEXT,
+                    fomo_threshold REAL,
+                    gap_threshold REAL,
+                    whale_threshold_ext REAL,
+                    whale_threshold_reg REAL,
+                    catch_rate REAL
+                )
+            """)
+            
             # تهيئة الرصيد الافتراضي بـ 1000 دولار إذا لم يكن موجوداً
             cursor.execute("SELECT COUNT(*) FROM account_balance")
             if cursor.fetchone()[0] == 0:
@@ -336,5 +350,32 @@ class QuantDatabase:
                 "early_rate": round(early_rate, 1),
                 "overall_index": round(overall_index, 1)
             }
+
+    def log_optimization_run(self, missed_gainers, fomo, gap, whale_ext, whale_reg, catch_rate):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO optimization_logs (optimized_at, missed_gainers, fomo_threshold, gap_threshold, whale_threshold_ext, whale_threshold_reg, catch_rate)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (datetime.now().isoformat(), missed_gainers, fomo, gap, whale_ext, whale_reg, catch_rate))
+            conn.commit()
+
+    def get_latest_optimization_run(self):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM optimization_logs ORDER BY id DESC LIMIT 1")
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "id": row[0],
+                    "optimized_at": row[1],
+                    "missed_gainers": row[2],
+                    "fomo_threshold": row[3],
+                    "gap_threshold": row[4],
+                    "whale_threshold_ext": row[5],
+                    "whale_threshold_reg": row[6],
+                    "catch_rate": row[7]
+                }
+            return None
 
 

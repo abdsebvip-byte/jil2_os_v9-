@@ -430,14 +430,15 @@ now_est = datetime.now(est_tz)
 st.write(f"⏱️ **آخر تحديث للرادار:** `{now_est.strftime('%H:%M:%S')} EST` | **تأخير البيانات:** `0 ثوانٍ (بيانات لحظية 🟢)`")
 
 # 4. علامات التبويب الموزعة للفترات
-t_halts, t1, t2, t3, t4, t5, t6 = st.tabs([
+t_halts, t1, t2, t3, t4, t5, t6, t7 = st.tabs([
     "🚨 صفقات الاستئناف (LULD Halts)",
     "🛰️ جلسة ما قبل السوق", 
     "📊 الجلسة الرسمية للسوق", 
     "🌙 جلسة بعد الإغلاق", 
     "📡 رادار الأخبار الفورية (SEC)",
     "🏆 سجل صيد اليقين التراكمي",
-    "📊 محرك الاختبار التاريخي"
+    "📊 محرك الاختبار التاريخي",
+    "🤖 وكيل التحسين الذاتي (AI)"
 ])
 
 with t_halts:
@@ -1186,6 +1187,60 @@ with t6:
                     st.dataframe(df_trades, use_container_width=True, hide_index=True)
                 else:
                     st.info("ℹ️ لم يتم توليد أي صفقات خلال فترة الفحص التاريخية المحددة.")
+
+with t7:
+    st.markdown("### 🤖 وكيل التطوير والتحسين الذاتي المستقل (Self-Optimizing Agent)")
+    st.write("يقوم وكيل الذكاء الاصطناعي بمراجعة الأسهم الأكثر صعوداً يومياً، وتشخيص أسباب استبعادها، وتعديل قيم فلاتر المنصة ديناميكياً لرفع نسبة اقتناص صعود السوق بدون تدخل بشري.")
+    
+    # عرض القيم الحالية للفلاتر
+    current_thresholds = intel.get_thresholds()
+    
+    col_t1, col_t2, col_t3, col_t4 = st.columns(4)
+    with col_t1:
+        st.metric(label="🛡️ حد منع الفومو الحالي", value=f"{current_thresholds['fomo']:.1f}%")
+    with col_t2:
+        st.metric(label="🚨 حد درع الفجوة الحالي", value=f"{current_thresholds['gap']:.1f}%")
+    with col_t3:
+        st.metric(label="🌙 سيولة الجلسات الممتدة", value=f"${current_thresholds['whale_ext']:,.0f}")
+    with col_t4:
+        st.metric(label="📊 سيولة الجلسة الرسمية", value=f"${current_thresholds['whale_reg']:,.0f}")
+        
+    st.write("---")
+    
+    # جلب آخر عملية تحسين
+    latest_run = db.get_latest_optimization_run()
+    if latest_run:
+        st.markdown("#### 📊 نتائج آخر فحص ومعايرة تلقائية:")
+        st.info(f"⏱️ **تاريخ الفحص:** `{latest_run['optimized_at']}` | 🎯 **نسبة اقتناص صعود السوق المقدرة:** `{latest_run['catch_rate']:.1f}%`")
+        
+        st.markdown("**📁 الأسهم الأكثر صعوداً التي خضعت للتدقيق اليوم:**")
+        st.code(latest_run["missed_gainers"])
+        
+        col_r1, col_r2 = st.columns(2)
+        with col_r1:
+            st.write(f"📈 **حد منع الفومو المعتمد:** `{latest_run['fomo_threshold']:.1f}%`")
+            st.write(f"🛡️ **حد درع الفجوة المعتمد:** `{latest_run['gap_threshold']:.1f}%`")
+        with col_r2:
+            st.write(f"⚡ **عتبة سيولة الجلسات الممتدة:** `${latest_run['whale_threshold_ext']:,.0f}`")
+            st.write(f"📊 **عتبة سيولة الجلسة الرسمية:** `${latest_run['whale_threshold_reg']:,.0f}`")
+    else:
+        st.info("ℹ️ لم يتم تشغيل أي عملية معايرة تلقائية حتى الآن. يمكنك تشغيل المعايرة يدوياً بالأسفل.")
+        
+    st.write("---")
+    
+    if st.button("⚙️ تشغيل معايرة وتحسين خوارزميات المنصة الآن", use_container_width=True):
+        with st.spinner("جاري تشغيل وكيل التطوير لإجراء مئات المحاكاة على فلاتر السوق وسجل الفرص الفائتة..."):
+            from self_optimizer import QuantSelfOptimizer
+            optimizer = QuantSelfOptimizer()
+            res = optimizer.run_optimization()
+            
+            if res.get("status") == "OPTIMIZED":
+                st.success(f"✅ تم تحسين فلاتر المنصة تلقائياً بنجاح! ارتفعت نسبة رصد السوق اليوم إلى **{res['catch_rate']:.1f}%** عبر معايرة المعايير الجديدة.")
+                st.balloons()
+                time.sleep(2)
+                st.rerun()
+            else:
+                st.warning(f"⚠️ فحص الوكيل لم يتطلب تعديل البارامترات: {res.get('reason', 'الفلاتر الحالية تعطي أفضل نسبة رصد واقتناص آمنة حالياً')}")
 
 # --- التحديث التلقائي للبيانات والصفحة ---
 import time

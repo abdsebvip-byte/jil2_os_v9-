@@ -8,6 +8,22 @@ class QuantIntelligence:
         # نضبط الـ contamination عند 0.05 (5% شذوذ حجمي) لتقليل إشارات الضجيج
         self.iso_forest = IsolationForest(contamination=0.05, random_state=42)
 
+    def get_thresholds(self):
+        """
+        Loads thresholds dynamically from config.env with fallback defaults.
+        """
+        import os
+        from dotenv import load_dotenv
+        # Use absolute path or relative to project root
+        load_dotenv("config.env")
+        
+        return {
+            "fomo": float(os.getenv("FOMO_THRESHOLD", 45.0)),
+            "gap": float(os.getenv("GAP_THRESHOLD", 15.0)),
+            "whale_ext": float(os.getenv("WHALE_THRESHOLD_EXT", 500000.0)),
+            "whale_reg": float(os.getenv("WHALE_THRESHOLD_REG", 1500000.0))
+        }
+
     def fit_anomaly_detector(self, raw_quotes, session):
         """
         Fit Isolation Forest dynamically on the currently retrieved market snapshots.
@@ -103,23 +119,25 @@ class QuantIntelligence:
         else:
             details["Price_Filter"] = False
 
-        # الطبقة 2: درع الفجوة الافتتاحية (أقل من 15%)
+        # الطبقة 2: درع الفجوة الافتتاحية
         gap = ((open_price - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
-        if abs(gap) <= 15.0:
+        gap_limit = self.get_thresholds()["gap"]
+        if abs(gap) <= gap_limit:
             score += 15
             details["Gap_Shield"] = True
         else:
             details["Gap_Shield"] = False
 
         # الطبقة 3: صعود الاختراق المبكر (+5% إلى +15%)
-        # الصعود فوق 40% يخصم نقاط (مضاد الـ FOMO)
+        # الصعود فوق fomo_limit يخصم نقاط (مضاد الـ FOMO)
+        fomo_limit = self.get_thresholds()["fomo"]
         if 5.0 <= price_change <= 15.0:
             score += 20
             details["Early_Breakout"] = "IDEAL"
-        elif 15.0 < price_change <= 40.0:
+        elif 15.0 < price_change <= fomo_limit:
             score += 10
             details["Early_Breakout"] = "HIGH"
-        elif price_change > 40.0:
+        elif price_change > fomo_limit:
             score -= 10
             details["Early_Breakout"] = "FOMO_BLOCKED"
         else:
@@ -135,11 +153,12 @@ class QuantIntelligence:
         else:
             details["RVOL_Acceleration"] = False
 
-        # الطبقة 5: تدفق كتل الحيتان الفعلي (Value.Traded >= $1.5M/500k AND Price >= VWAP)
+        # الطبقة 5: تدفق كتل الحيتان الفعلي (Value.Traded >= whale_limit AND Price >= VWAP)
         value_traded = float(quote.get("value_traded", 0.0))
         vwap = float(quote.get("vwap", 0.0))
         
-        whale_limit = 500000.0 if session in ["PRE_MARKET", "AFTER_HOURS"] else 1500000.0
+        thresholds = self.get_thresholds()
+        whale_limit = thresholds["whale_ext"] if session in ["PRE_MARKET", "AFTER_HOURS"] else thresholds["whale_reg"]
         
         if value_traded > 0.0 and vwap > 0.0:
             if value_traded >= whale_limit and price >= vwap:
