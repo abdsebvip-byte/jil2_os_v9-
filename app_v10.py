@@ -554,6 +554,20 @@ with t_halts:
     else:
         st.info("⏳ لا توجد أسهم موقوفة عن التداول حالياً في ناسداك.")
 
+def get_direct_action(r):
+    if r["Is_Dilution"]:
+        return "🔴 تجنب (🚨 تخفيف S-1)"
+    if r["Change_%"] > 40.0:
+        return "🔴 تجنب (🚨 صعود فجوة)"
+    if r["Conviction_Score"] >= 90:
+        return "🟢 شراء فوري (مؤشر 90%+)"
+    if r["Conviction_Score"] >= 80:
+        return "🟢 شراء تدريجي (مؤشر 80%+)"
+    if r["Conviction_Score"] >= 70 and r["RVOL"] >= 2.0:
+        return "⚡ مضاربة سريعة (مؤشر 70%+)"
+    return "🔴 مراقبة فقط"
+
+
 def run_session_pipeline(session_name):
     st.markdown(f"🔬 **حالة المعالجة الحالية:** جاري مسح وتصفية سيولة جلسة `{session_name}`...")
     
@@ -815,19 +829,6 @@ def run_session_pipeline(session_name):
                     (df_opportunities["Short_Pct"] >= 10.0)
                 ].copy()
                 
-                def get_direct_action(r):
-                    if r["Is_Dilution"]:
-                        return "🔴 تجنب (🚨 تخفيف S-1)"
-                    if r["Change_%"] > 40.0:
-                        return "🔴 تجنب (🚨 صعود فجوة)"
-                    if r["Conviction_Score"] >= 90:
-                        return "🟢 شراء فوري (مؤشر 90%+)"
-                    if r["Conviction_Score"] >= 80:
-                        return "🟢 شراء تدريجي (مؤشر 80%+)"
-                    if r["Conviction_Score"] >= 70 and r["RVOL"] >= 2.0:
-                        return "⚡ مضاربة سريعة (مؤشر 70%+)"
-                    return "🔴 مراقبة فقط"
-
                 if not df_explosive.empty:
                     df_exp_display = df_explosive.copy()
                     df_exp_display["التوجيه المباشر"] = df_exp_display.apply(get_direct_action, axis=1)
