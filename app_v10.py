@@ -177,6 +177,22 @@ def render_premium_table(df):
             font-family: 'Cairo', 'Inter', sans-serif;
             text-align: center;
         }
+        /* تثبيت العمود الأول لرمز السهم عند التمرير الأفقي للجداول */
+        .premium-table th:first-child, .premium-table td:first-child {
+            position: sticky !important;
+            left: 0 !important;
+            background-color: #0F172A !important;
+            z-index: 10 !important;
+            box-shadow: 2px 0 5px rgba(0, 0, 0, 0.35) !important;
+        }
+        .premium-table tr:hover td:first-child {
+            background-color: #1E293B !important;
+        }
+        .premium-table th:first-child {
+            background: linear-gradient(135deg, #1E293B, #0F172A) !important;
+            z-index: 11 !important;
+        }
+
         .premium-table th {
             background: linear-gradient(135deg, #1E293B, #0F172A) !important;
             color: #00FFCC !important;
@@ -673,8 +689,8 @@ def run_session_pipeline(session_name):
             
             df_opportunities = pd.DataFrame(opportunities)
             if not df_opportunities.empty:
-                # ترتيب الفرص حسب قوة الاختراق وثقة الذكاء الاصطناعي
-                df_opportunities = df_opportunities.sort_values(by=["Conviction_Score", "Confidence_Score"], ascending=[False, False])
+                # ترتيب الفرص حسب قوة الاختراق واحتمالية خوارزمية التعلم الآلي لضمان الأقوى في القمة
+                df_opportunities = df_opportunities.sort_values(by=["Conviction_Score", "ML_Probability"], ascending=[False, False])
                 
                 # --- القسم الأول المخصص لرصد شذوذ الحجم (Isolation Forest) ---
                 st.markdown("""
@@ -707,12 +723,15 @@ def run_session_pipeline(session_name):
                 top_stock = df_opportunities.iloc[0]
                 matches = top_stock["Matches"]
                 
+                target_pct_card = intel.calculate_dynamic_target(top_stock['Conviction_Score'], top_stock['Confidence_Score'] * 10.0)
                 st.markdown(f"""
                 <div class="signal-card">
                     <h2 style='color:#10b981; margin:0 0 10px 0; font-size:22px; font-weight:700;'>🎯 التوجيه التنفيذي للمركز الأول (أقوى تطابق كمي)</h2>
                     <h3>🔥 رمز السهم: {top_stock['Symbol']} | نسبة تطابق الخوارزمية: {top_stock['Conviction_Score']}%</h3>
                     <p style='font-size:18px;margin:5px 0;'>السعر الحالي: <b>{top_stock['Price']:.4f} $</b> | التغير اليومي: <b>{top_stock['Change_%']:+.2f}%</b> | تسارع الحجم النسبي: <b>{top_stock['RVOL']:.2f}x</b></p>
-                    <p style='font-size:15px; color:#3b82f6;margin:0;'><b>مؤشر الثقة الميكروي: {top_stock['Confidence_Score']}/10 وفق خوارزمية الغابة المعزولة (Isolation Forest)</b></p>
+                    <p style='font-size:15px; color:#3b82f6;margin:0 0 10px 0;'><b>مؤشر الثقة الميكروي: {top_stock['Confidence_Score']}/10 وفق خوارزمية الغابة المعزولة (Isolation Forest)</b></p>
+                    <h3 style="color:#00FFCC !important; margin: 5px 0;">🎯 القرار المقترح: {get_direct_action(top_stock)}</h3>
+                    <p style='font-size:16px; margin:5px 0; color:#FFA500;'>💰 <b>الهدف المقترح:</b> +{target_pct_card}% (سعر: ${top_stock['Price'] * (1 + target_pct_card/100.0):.2f}) | 🛡️ <b>وقف الخسارة:</b> -5% (سعر: ${top_stock['Price'] * 0.95:.2f})</p>
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -801,12 +820,12 @@ def run_session_pipeline(session_name):
                         return "🔴 تجنب (🚨 تخفيف S-1)"
                     if r["Change_%"] > 40.0:
                         return "🔴 تجنب (🚨 صعود فجوة)"
-                    if r["Conviction_Score"] >= 90 and r["ML_Probability"] >= 70.0:
-                        return "🟢 شراء فوري"
-                    if r["Conviction_Score"] >= 80 and r["ML_Probability"] >= 60.0:
-                        return "🟢 شراء تدريجي"
-                    if r["Conviction_Score"] >= 75 and r["RVOL"] >= 2.5:
-                        return "⚡ مضاربة سريعة"
+                    if r["Conviction_Score"] >= 90:
+                        return "🟢 شراء فوري (مؤشر 90%+)"
+                    if r["Conviction_Score"] >= 80:
+                        return "🟢 شراء تدريجي (مؤشر 80%+)"
+                    if r["Conviction_Score"] >= 70 and r["RVOL"] >= 2.0:
+                        return "⚡ مضاربة سريعة (مؤشر 70%+)"
                     return "🔴 مراقبة فقط"
 
                 if not df_explosive.empty:
