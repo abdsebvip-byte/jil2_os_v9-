@@ -307,25 +307,35 @@ scanner = FreeMarketScanner()
 intel = QuantIntelligence()
 news_radar = SECNewsRadar()
 
-# تفعيل مشغل الفحص التلقائي الخلفي لإرسال الإشارات لتيليجرام 24 ساعة
-@st.cache_resource
+# تفعيل مشغل الفحص التلقائي الخلفي مع فحص الحالة الذاتي ومنع التوقف الصامت
 def initialize_background_auto_scanner():
     import threading
-    from auto_scanner import start_scheduler
-    thread = threading.Thread(target=start_scheduler, daemon=True)
-    thread.start()
-    return "ACTIVE"
+    thread_exists = any(t.name == "AutoScannerThread" for t in threading.enumerate())
+    if not thread_exists:
+        try:
+            from auto_scanner import start_scheduler
+            thread = threading.Thread(target=start_scheduler, name="AutoScannerThread", daemon=True)
+            thread.start()
+            return "STARTED"
+        except Exception as e:
+            return f"ERROR: {e}"
+    return "ALREADY_RUNNING"
 
 auto_status = initialize_background_auto_scanner()
 
-# تفعيل خادم البوت التفاعلي لتلقي أوامر المحفظة والاستشارات بالعربية 24 ساعة
-@st.cache_resource
+# تفعيل خادم البوت التفاعلي مع الفحص الذاتي للخيوط
 def initialize_interactive_bot():
     import threading
-    from bot_listener import start_bot_thread
-    thread = threading.Thread(target=start_bot_thread, daemon=True)
-    thread.start()
-    return "ACTIVE"
+    thread_exists = any(t.name == "InteractiveBotThread" for t in threading.enumerate())
+    if not thread_exists:
+        try:
+            from bot_listener import start_bot_thread
+            thread = threading.Thread(target=start_bot_thread, name="InteractiveBotThread", daemon=True)
+            thread.start()
+            return "STARTED"
+        except Exception as e:
+            return f"ERROR: {e}"
+    return "ALREADY_RUNNING"
 
 bot_status = initialize_interactive_bot()
 
