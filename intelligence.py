@@ -171,7 +171,7 @@ class QuantIntelligence:
             conf = float(anomaly_info.get("confidence_score", 5.0) if anomaly_info else 5.0)
             return conf * 10.0, np.zeros(6, dtype=np.float32)
 
-    def calculate_7_layer_conviction(self, quote, session, anomaly_info):
+    def calculate_7_layer_conviction(self, quote, session, anomaly_info, sec_sentiment=None):
         """
         Calculate a 0-100 conviction score for early explosive-stock setups.
         """
@@ -188,8 +188,15 @@ class QuantIntelligence:
         else:
             details["Price_Filter"] = False
 
+        # Catalyst-Adjusted Gap and Fomo Limits
+        gap_limit = thresholds["gap"]
+        fomo_limit = thresholds["fomo"]
+        if isinstance(sec_sentiment, dict) and (sec_sentiment.get("insider_buy") or sec_sentiment.get("material_news")):
+            gap_limit = 50.0
+            fomo_limit = 75.0
+
         gap = ((open_price - prev_close) / prev_close) * 100.0 if prev_close > 0 else 0.0
-        if abs(gap) <= thresholds["gap"]:
+        if abs(gap) <= gap_limit:
             score += 15
             details["Gap_Shield"] = True
         else:
@@ -198,10 +205,10 @@ class QuantIntelligence:
         if 5.0 <= price_change <= 15.0:
             score += 20
             details["Early_Breakout"] = "IDEAL"
-        elif 15.0 < price_change <= thresholds["fomo"]:
+        elif 15.0 < price_change <= fomo_limit:
             score += 10
             details["Early_Breakout"] = "HIGH"
-        elif price_change > thresholds["fomo"]:
+        elif price_change > fomo_limit:
             score -= 10
             details["Early_Breakout"] = "FOMO_BLOCKED"
         else:

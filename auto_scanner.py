@@ -159,12 +159,12 @@ def start_scheduler():
                             current_vol = float(price_data.get("regularMarketVolume") or 0.0)
                             rvol = current_vol / avg_vol if avg_vol > 0 else 1.0
                             
-                            anomaly_info = {"is_anomaly": True, "confidence_score": 7.0} 
-                            score, details, prc, chg, rv = intel.calculate_7_layer_conviction(price_data, session, anomaly_info)
-                            
                             # Fetch news catalyst (SEC Form 4 or 8-K)
                             sec_sentiment = get_sec_filings_sentiment(sym)
                             is_dilution = sec_sentiment["dilution_warning"]
+
+                            anomaly_info = {"is_anomaly": True, "confidence_score": 7.0} 
+                            score, details, prc, chg, rv = intel.calculate_7_layer_conviction(price_data, session, anomaly_info, sec_sentiment=sec_sentiment)
                             
                             # Apply SEC boosts
                             if sec_sentiment.get("insider_buy"):
@@ -259,24 +259,42 @@ def start_scheduler():
                 
                 for quote in raw_data:
                     try:
-                        score, details, price, change, rvol = intel.calculate_7_layer_conviction(quote, session, anomaly_map)
                         sym = quote.get("symbol")
-                        
+                        if not sym:
+                            continue
+                            
                         # Exclude derivatives/warrants/SPAC units
                         if len(sym) > 4 or sym.endswith(("U", "W", "R")):
                             continue
                             
-                        # Price/change/liquidity filters aligned with the explosive-stock mandate.
+                        # Quick manual calculation of price and change to avoid redundant network calls
+                        price = _safe_float(quote.get("regularMarketPrice"), 0.0)
+                        prev_close = _safe_float(quote.get("regularMarketPreviousClose"), price)
+                        change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else 0.0
+                        
+                        if session == "PRE_MARKET" and quote.get("preMarketPrice") is not None:
+                            price = _safe_float(quote.get("preMarketPrice"), price)
+                            change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else change
+                        elif session == "AFTER_HOURS" and quote.get("postMarketPrice") is not None:
+                            price = _safe_float(quote.get("postMarketPrice"), price)
+                            change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else change
+
+                        # Price/change filters aligned with the explosive-stock mandate.
                         if price <= 0.0 or price > 20.0 or change < 5.0 or change > 45.0:
                             continue
 
+                        # Check RVOL and Float before loading news to save API bandwidth
                         thresholds = intel.get_thresholds()
                         float_shares = quote.get("float_shares_outstanding")
                         if float_shares is not None and _safe_float(float_shares, thresholds["float_max"]) > thresholds["float_max"]:
                             continue
+                            
+                        volume = _safe_float(quote.get("regularMarketVolume"), 0.0)
+                        avg_volume = _safe_float(quote.get("averageDailyVolume3Month"), 100000.0)
+                        rvol = volume / avg_volume if avg_volume > 0 else 1.0
                         if rvol < thresholds["rvol_min"]:
                             continue
-                            
+
                         # Session specific filters
                         if session == "PRE_MARKET":
                             pre_chg = quote.get("preMarketChangePercent")
@@ -286,17 +304,19 @@ def start_scheduler():
                             post_chg = quote.get("postMarketChangePercent")
                             if post_chg is None or float(post_chg) == 0.0:
                                 continue
-                                
+
+                        # Fetch news catalyst (SEC Form 4 or 8-K)
+                        sec_sentiment = get_sec_filings_sentiment(sym)
+
+                        # Calculate conviction score and features with catalyst context
                         anomaly_info = anomaly_map.get(sym, {"is_anomaly": False, "confidence_score": 1.0})
-                        
+                        score, details, price, change, rvol = intel.calculate_7_layer_conviction(quote, session, anomaly_map, sec_sentiment=sec_sentiment)
+
                         # Trigger alert if algorithm conviction is strong
                         if score >= 80 and anomaly_info["confidence_score"] >= 5.0:
                             if db.check_alert_sent_recently(sym, hours=3):
                                 continue
-                                
-                            # SEC Filings Sentiment Check
-                            sec_sentiment = get_sec_filings_sentiment(sym)
-                            
+
                             # Dilution Protection: Skip alert if Form S-1 Dilution detected!
                             if sec_sentiment["dilution_warning"]:
                                 logging.warning(f"Background Scanner: Skipped dilution target {sym}.")

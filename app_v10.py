@@ -636,13 +636,26 @@ def run_session_pipeline(session_name):
             opportunities = []
             for quote in raw_data:
                 try:
-                    score, details, price, change, rvol = intel.calculate_7_layer_conviction(quote, session_name, anomaly_map)
                     sym = quote.get("symbol")
-                    
+                    if not sym:
+                        continue
+                        
                     # استبعاد شذوذ التقسيم وأسهم SPACs والخيارات والوحدات الوهمية (أطول من 4 أحرف أو تنتهي بـ U, W, R)
                     if len(sym) > 4 or sym.endswith(("U", "W", "R")):
                         continue
-                        
+
+                    # حساب يدوي لسعر وتغير الجلسة لتجنب خلل كسور ياهو
+                    price = _safe_float(quote.get("regularMarketPrice"), 0.0)
+                    prev_close = _safe_float(quote.get("regularMarketPreviousClose"), price)
+                    change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else 0.0
+                    
+                    if session_name == "PRE_MARKET" and quote.get("preMarketPrice") is not None:
+                        price = _safe_float(quote.get("preMarketPrice"), price)
+                        change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else change
+                    elif session_name == "AFTER_HOURS" and quote.get("postMarketPrice") is not None:
+                        price = _safe_float(quote.get("postMarketPrice"), price)
+                        change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else change
+
                     if price <= 0.0 or price > 20.0 or change < 3.0 or change > 45.0:
                         continue
                         
@@ -655,8 +668,13 @@ def run_session_pipeline(session_name):
                         post_chg = quote.get("postMarketChangePercent")
                         if post_chg is None or float(post_chg) == 0.0:
                             continue
-                        
+
+                    # جلب المحفزات الأخبارية من الـ SEC لدعم فك قيود الفجوة
+                    sec_sentiment = get_sec_filings_sentiment(sym)
+                    has_catalyst = bool(sec_sentiment.get("insider_buy") or sec_sentiment.get("material_news"))
+
                     anomaly_info = anomaly_map.get(sym, {"is_anomaly": False, "confidence_score": 1.0})
+                    score, details, price, change, rvol = intel.calculate_7_layer_conviction(quote, session_name, anomaly_map, sec_sentiment=sec_sentiment)
                     
                     # حساب احتمالية الانفجار عبر نموذج التعلم الآلي المطور بـ 8 ميزات (مع الفلوت والبيع المكشوف)
                     f_info = hist_features.get(sym, {
@@ -684,26 +702,20 @@ def run_session_pipeline(session_name):
                     is_halted = sym in active_halts
                     halt_reason = active_halts[sym] if is_halted else ""
                     
-                    # فحص الإيداعات والتخفيف والملكية القانونية عبر SEC فقط للأسهم المرشحة للانفجارات عالية اليقين لتفادي البطء والتعليق
-                    is_candidate = (score >= 80) and (rvol >= 3.0)
-                    sec_tags = "لا يوجد"
-                    is_dilution = False
-                    if is_candidate:
-                        sec_sentiment = get_sec_filings_sentiment(sym)
-                        sec_tags = ", ".join(sec_sentiment["details"]) if sec_sentiment["details"] else "لا يوجد"
-                        is_dilution = sec_sentiment["dilution_warning"]
+                    sec_tags = ", ".join(sec_sentiment["details"]) if sec_sentiment["details"] else "لا يوجد"
+                    is_dilution = sec_sentiment["dilution_warning"]
+                    
+                    # 1. تعديل النقاط بناءً على ملكية الملاك (Form 4) +15%
+                    if sec_sentiment.get("insider_buy"):
+                        score = min(100, score + 15)
                         
-                        # 1. تعديل النقاط بناءً على ملكية الملاك (Form 4) +15%
-                        if sec_sentiment.get("insider_buy"):
-                            score = min(100, score + 15)
-                            
-                        # 2. تعديل النقاط بناءً على الأحداث الجوهرية (Form 8-K) +10%
-                        if sec_sentiment.get("material_news"):
-                            score = min(100, score + 10)
-                            
-                        # 3. عقوبة تخفيف الأسهم (Form S-1) تخصم 70% لمنع تداول السهم
-                        if is_dilution:
-                            score = max(0, score - 70)
+                    # 2. تعديل النقاط بناءً على الأحداث الجوهرية (Form 8-K) +10%
+                    if sec_sentiment.get("material_news"):
+                        score = min(100, score + 10)
+                        
+                    # 3. عقوبة تخفيف الأسهم (Form S-1) تخصم 70% لمنع تداول السهم
+                    if is_dilution:
+                        score = max(0, score - 70)
                             
                     # 4. تعديل النقاط بناءً على زخم التداول الاجتماعي (Stocktwits) +10%
                     # نمنح الزخم الاجتماعي القوة فقط إذا كانت المؤشرات الفنية مستقرة أصلاً (score >= 70) لمنع الـ FOMO والتلاعب
@@ -729,6 +741,7 @@ def run_session_pipeline(session_name):
                         "Float_M": f_info["float_shares_m"],
                         "Short_Pct": f_info["short_percent"],
                         "Squeeze_Score": f_info.get("squeeze_score", 0),
+                        "Has_Catalyst": has_catalyst,
                         "Matches": details
                     })
                 except Exception as e:
@@ -853,18 +866,35 @@ def run_session_pipeline(session_name):
                 
                 # أ. صفقات الانفجار المعتمدة (High-Conviction Explosive Plays)
                 st.markdown("### 💥 صفقات الانفجار المعتمدة (High-Conviction Explosive Plays - Target dynamic / Stop -5%)")
-                st.write("أسهم فائقة القوة مطابقة لشروط الانفجار الميكروية الصارمة (تطابق >= 80%، تعلم آلي >= 60%، حجم نسبي >= 4.0x، أسهم حرة <= 15M، شورت >= 10%).")
+                st.write("أسهم فائقة القوة مطابقة لشروط الانفجار الميكروية الصارمة (مسار ضغط الشورت أو مسار محفز السيولة المنخفضة من الـ SEC).")
                 
-                df_explosive = df_opportunities[
-                    (df_opportunities["Conviction_Score"] >= 80) &
-                    (df_opportunities["ML_Probability"] >= 60.0) &
-                    (df_opportunities["RVOL"] >= 4.0) &
-                    (df_opportunities["Float_M"] <= 15.0) &
-                    (df_opportunities["Short_Pct"] >= 10.0)
-                ].copy()
+                # تطبيق محرك الانفجار ثنائي المسار (Dual-Track)
+                if not df_opportunities.empty:
+                    squeeze_track = (df_opportunities["Float_M"] <= 15.0) & (df_opportunities["Short_Pct"] >= 10.0)
+                    catalyst_track = (df_opportunities["Float_M"] <= 5.0) & (df_opportunities["Has_Catalyst"] == True)
+                    
+                    df_explosive = df_opportunities[
+                        (df_opportunities["Conviction_Score"] >= 80) &
+                        (df_opportunities["RVOL"] >= 4.0) &
+                        (
+                            ((df_opportunities["ML_Probability"] >= 60.0) & squeeze_track) |
+                            ((df_opportunities["ML_Probability"] >= 50.0) & catalyst_track)
+                        )
+                    ].copy()
+                else:
+                    df_explosive = pd.DataFrame()
                 
                 if not df_explosive.empty:
                     df_exp_display = df_explosive.copy()
+                    
+                    def get_track_type(row):
+                        if row["Float_M"] <= 15.0 and row["Short_Pct"] >= 10.0:
+                            return "💥 ضغط شورت"
+                        elif row["Float_M"] <= 5.0 and row["Has_Catalyst"]:
+                            return "⭐ محفز فلوت منخفض"
+                        return "نشط 🟢"
+                        
+                    df_exp_display["مسار الانفجار"] = df_exp_display.apply(get_track_type, axis=1)
                     df_exp_display["التوجيه المباشر"] = df_exp_display.apply(get_direct_action, axis=1)
                     df_exp_display["تطابق الخوارزمية"] = df_exp_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%")
                     df_exp_display["احتمالية الانفجار (ML)"] = df_exp_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
@@ -874,11 +904,11 @@ def run_session_pipeline(session_name):
                     df_exp_display["تحذير التخفيف"] = df_exp_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
                     df_exp_display["مؤشر الضغط"] = df_exp_display["Squeeze_Score"].apply(lambda x: f"💥 {x}%" if x >= 80 else f"⚡ {x}%" if x >= 50 else f"🟢 {x}%")
                     
-                    df_exp_table = df_exp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة الإيقاف", "تحذير التخفيف", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "التوجيه المباشر"]].copy()
-                    df_exp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة التداول", "التخفيف (Dilution)", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "التوجيه المباشر"]
+                    df_exp_table = df_exp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة الإيقاف", "تحذير التخفيف", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "مسار الانفجار", "التوجيه المباشر"]].copy()
+                    df_exp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة التداول", "التخفيف (Dilution)", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "مسار الانفجار", "التوجيه المباشر"]
                     st.markdown(render_premium_table(df_exp_table), unsafe_allow_html=True)
                 else:
-                    st.info("ℹ️ لا توجد حالياً أسهم مطابقة لمعايير الانفجار السعري الصارمة في هذه اللحظة (RVOL >= 4.0, Float <= 15M, Short >= 10%).")
+                    st.info("ℹ️ لا توجد حالياً أسهم مطابقة لمعايير الانفجار السعري الصارمة في هذه اللحظة (RVOL >= 4.0, Float <= 15M, Short >= 10% أو فلوت <= 5M مع محفز SEC إيجابي).")
                     
                 st.write("---")
                 
@@ -903,6 +933,30 @@ def run_session_pipeline(session_name):
                     st.markdown(render_premium_table(df_scalp_table), unsafe_allow_html=True)
                 else:
                     st.info("ℹ️ لا توجد حالياً أسهم نشطة للمضاربة السريعة اليومية.")
+                    
+                if session_name == "AFTER_HOURS":
+                    st.write("---")
+                    st.markdown("### 🌙 رادار مرشحي الفجوات السعرية للغد (Overnight Gap-Up Candidates)")
+                    st.write("أسهم تظهر تراكماً للسيولة والارتفاع غير الطبيعي بعد الإغلاق مع وجود محفزات إيجابية، وهي مرشحة لافتتاح الغد بفجوة سعرية.")
+                    
+                    df_overnight = df_opportunities[
+                        (df_opportunities["Change_%"] >= 5.0) &
+                        (df_opportunities["RVOL"] >= 3.0) &
+                        (df_opportunities["Has_Catalyst"] == True)
+                    ].copy()
+                    
+                    if not df_overnight.empty:
+                        df_ov_display = df_overnight.copy()
+                        df_ov_display["التوجيه المباشر"] = df_ov_display.apply(get_direct_action, axis=1)
+                        df_ov_display["تطابق الخوارزمية"] = df_ov_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%")
+                        df_ov_display["احتمالية الانفجار (ML)"] = df_ov_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
+                        df_ov_display["الأسهم الحرة"] = df_ov_display["Float_M"].apply(lambda x: f"{x:.1f}M")
+                        
+                        df_ov_table = df_ov_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "SEC_Tags", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "التوجيه المباشر"]].copy()
+                        df_ov_table.columns = ["رمز السهم", "السعر المسائي", "التغير المسائي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "المحفز الجوهري", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "التوجيه المباشر"]
+                        st.markdown(render_premium_table(df_ov_table), unsafe_allow_html=True)
+                    else:
+                        st.info("ℹ️ لا توجد حالياً أسهم مستوفية لشروط التراكم الليلي للغد (صعود >= 5%، حجم نسبي >= 3x، ومحفز SEC إيجابي).")
                 
             else:
                 st.warning("⚠️ لا توجد حالياً أسهم رخيصة تحقق شروط الانفجار الصارمة ومؤشرات الشذوذ في هذه الجلسة.")
