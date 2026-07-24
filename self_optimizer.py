@@ -80,8 +80,8 @@ class QuantSelfOptimizer:
             avg_vol = float(price_data.get("averageDailyVolume3Month") or 100000.0)
             current_vol = float(price_data.get("regularMarketVolume") or 0.0)
             rvol = current_vol / avg_vol if avg_vol > 0 else 1.0
-            if rvol < 1.2:
-                reasons.append(f"RVOL too low ({rvol:.2f}x < 1.2x)")
+            if rvol < current_thresholds.get("rvol_min", 4.0):
+                reasons.append(f"RVOL too low ({rvol:.2f}x < {current_thresholds.get('rvol_min', 4.0):.1f}x)")
                 
             if not reasons:
                 return "Passed all filters but probably conviction score was below 80%"
@@ -104,6 +104,8 @@ class QuantSelfOptimizer:
         gap_candidates = [10.0, 15.0, 20.0, 25.0, 30.0]
         whale_ext_candidates = [200000.0, 300000.0, 400000.0, 500000.0, 750000.0, 1000000.0]
         whale_reg_candidates = [1000000.0, 1250000.0, 1500000.0, 1750000.0, 2000000.0]
+        rvol_min = float(os.getenv("RVOL_MIN", 4.0))
+        float_max = float(os.getenv("FLOAT_MAX", 15000000.0))
 
         best_fomo = current["fomo"]
         best_gap = current["gap"]
@@ -153,7 +155,7 @@ class QuantSelfOptimizer:
         best_whale_reg = 1250000.0 if best_catch_rate > 50.0 else 1500000.0
 
         # Apply parameters to config.env
-        self.update_config_env(best_fomo, best_gap, best_whale_ext, best_whale_reg)
+        self.update_config_env(best_fomo, best_gap, best_whale_ext, best_whale_reg, rvol_min, float_max)
         
         # Log to DB
         missed_list = ", ".join(top_gainers)
@@ -169,7 +171,7 @@ class QuantSelfOptimizer:
             "symbols_processed": len(symbols_data)
         }
 
-    def update_config_env(self, fomo, gap, whale_ext, whale_reg):
+    def update_config_env(self, fomo, gap, whale_ext, whale_reg, rvol_min=4.0, float_max=15000000.0):
         """
         Overwrite the parameters in config.env safely.
         """
@@ -181,7 +183,14 @@ class QuantSelfOptimizer:
         # Remove existing definitions of these variables
         new_lines = []
         for line in lines:
-            if not any(line.startswith(var) for var in ["FOMO_THRESHOLD=", "GAP_THRESHOLD=", "WHALE_THRESHOLD_EXT=", "WHALE_THRESHOLD_REG="]):
+            if not any(line.startswith(var) for var in [
+                "FOMO_THRESHOLD=",
+                "GAP_THRESHOLD=",
+                "WHALE_THRESHOLD_EXT=",
+                "WHALE_THRESHOLD_REG=",
+                "RVOL_MIN=",
+                "FLOAT_MAX=",
+            ]):
                 new_lines.append(line)
         
         # Append new values
@@ -189,6 +198,8 @@ class QuantSelfOptimizer:
         new_lines.append(f"GAP_THRESHOLD={gap}")
         new_lines.append(f"WHALE_THRESHOLD_EXT={whale_ext}")
         new_lines.append(f"WHALE_THRESHOLD_REG={whale_reg}")
+        new_lines.append(f"RVOL_MIN={rvol_min}")
+        new_lines.append(f"FLOAT_MAX={float_max}")
         
         with open(env_path, "w", encoding="utf-8") as f:
             f.write("\n".join(new_lines))

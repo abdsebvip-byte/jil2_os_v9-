@@ -1,6 +1,7 @@
 # auto_scanner.py
 import time
 import asyncio
+import os
 from datetime import datetime
 import logging
 from scanner import FreeMarketScanner
@@ -8,6 +9,25 @@ from intelligence import QuantIntelligence
 from notifier import TelegramNotifier
 from database import QuantDatabase
 from alerts_tracker import get_active_halts, get_sec_filings_sentiment
+
+
+def _env_int(name, default, minimum=1):
+    try:
+        return max(minimum, int(os.getenv(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _chunks(items, size):
+    for idx in range(0, len(items), size):
+        yield items[idx:idx + size]
+
+
+def _safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 def update_pending_signals_status(db):
     """
@@ -21,8 +41,14 @@ def update_pending_signals_status(db):
             return
             
         symbols = [p["symbol"] for p in pending]
-        tickers = yq.Ticker(symbols)
-        price_data = tickers.price
+        batch_size = _env_int("PRICE_STATUS_BATCH_SIZE", 40, 1)
+        price_data = {}
+        for batch in _chunks(symbols, batch_size):
+            tickers = yq.Ticker(batch)
+            batch_prices = tickers.price
+            if isinstance(batch_prices, dict):
+                price_data.update(batch_prices)
+            time.sleep(0.15)
         
         for p in pending:
             sym = p["symbol"]
@@ -69,12 +95,15 @@ def start_scheduler():
     intel = QuantIntelligence()
     notifier = TelegramNotifier()
     db = QuantDatabase()
+    halt_poll_seconds = _env_int("HALT_POLL_SECONDS", 60, 15)
+    full_scan_seconds = _env_int("FULL_SCAN_SECONDS", 180, 60)
+    closed_sleep_seconds = _env_int("CLOSED_MARKET_SLEEP_SECONDS", 600, 60)
     
     # Initialize async loop inside this daemon thread
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
-    cycle_counter = 0
+    last_full_scan_at = 0.0
     notified_halts = set()
     recommended_halts = set()
     
@@ -90,8 +119,8 @@ def start_scheduler():
             
             # If market is closed, sleep longer but check halts less frequently
             if session == "NIGHT_CLOSED":
-                print("Background Scanner: Market is closed (Night). Sleeping for 10 minutes...")
-                time.sleep(600)
+                print(f"Background Scanner: Market is closed (Night). Sleeping for {closed_sleep_seconds} seconds...")
+                time.sleep(closed_sleep_seconds)
                 continue
                 
             # 1. Real-time Halts Monitor (Runs every 60 seconds)
@@ -211,19 +240,19 @@ def start_scheduler():
                 logging.warning(f"Background Scanner Halts Loop Error: {e}")
                 
             # 2. Full Market Anomaly & Conviction Scan (Runs every 180 seconds / 3 cycles)
-            cycle_counter += 1
-            if cycle_counter >= 3:
-                cycle_counter = 0
+            now_ts = time.monotonic()
+            if now_ts - last_full_scan_at >= full_scan_seconds:
+                last_full_scan_at = now_ts
                 print(f"Background Scanner: Running full market scan for session {session}...")
                 
                 symbols = scanner.fetch_all_us_symbols()
                 if not symbols:
-                    time.sleep(60)
+                    time.sleep(halt_poll_seconds)
                     continue
                     
                 raw_data = loop.run_until_complete(scanner.scan_entire_market())
                 if not raw_data:
-                    time.sleep(60)
+                    time.sleep(halt_poll_seconds)
                     continue
                     
                 anomaly_map = intel.fit_anomaly_detector(raw_data, session)
@@ -237,8 +266,15 @@ def start_scheduler():
                         if len(sym) > 4 or sym.endswith(("U", "W", "R")):
                             continue
                             
-                        # Price/Change Filters
-                        if price <= 0.0 or price > 20.0 or change < 3.0 or change > 45.0:
+                        # Price/change/liquidity filters aligned with the explosive-stock mandate.
+                        if price <= 0.0 or price > 20.0 or change < 5.0 or change > 45.0:
+                            continue
+
+                        thresholds = intel.get_thresholds()
+                        float_shares = quote.get("float_shares_outstanding")
+                        if float_shares is not None and _safe_float(float_shares, thresholds["float_max"]) > thresholds["float_max"]:
+                            continue
+                        if rvol < thresholds["rvol_min"]:
                             continue
                             
                         # Session specific filters
@@ -316,7 +352,7 @@ def start_scheduler():
                         continue
                         
             # Sleep 60 seconds for next halts check
-            time.sleep(60)
+            time.sleep(halt_poll_seconds)
         except Exception as e:
             logging.error(f"Background Scanner Main Loop Critical Error: {e}")
-            time.sleep(60)
+            time.sleep(halt_poll_seconds)
