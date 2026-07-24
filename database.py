@@ -334,10 +334,10 @@ class QuantDatabase:
             win_rate = (success_count / closed_count * 100.0) if closed_count > 0 else 0.0
             early_rate = (early_count / total_count * 100.0) if total_count > 0 else 0.0
             
-            # If no data exists yet, we default to 100.0 to avoid showing 0% to the user on day 1
+            # If no data exists yet, we default to 0.0 to show accurate performance
             if total_count == 0:
-                win_rate = 100.0
-                early_rate = 100.0
+                win_rate = 0.0
+                early_rate = 0.0
                 
             overall_index = 0.6 * win_rate + 0.4 * early_rate
             

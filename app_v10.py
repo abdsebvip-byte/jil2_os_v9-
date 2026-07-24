@@ -1,5 +1,6 @@
 # module: app_v10.py
 import streamlit as st
+import time
 import pandas as pd
 import asyncio
 import logging
