@@ -39,8 +39,8 @@ class QuantIntelligence:
 
     def _session_price_change(self, quote, session):
         price = self._safe_float(quote.get("regularMarketPrice"), 0.0)
-        change = self._safe_float(quote.get("regularMarketChangePercent"), 0.0)
         prev_close = self._safe_float(quote.get("regularMarketPreviousClose"), price)
+        change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else 0.0
 
         if session == "PRE_MARKET" and quote.get("preMarketPrice") is not None:
             price = self._safe_float(quote.get("preMarketPrice"), price)
