@@ -192,8 +192,8 @@ class QuantIntelligence:
         gap_limit = thresholds["gap"]
         fomo_limit = thresholds["fomo"]
         if isinstance(sec_sentiment, dict) and (sec_sentiment.get("insider_buy") or sec_sentiment.get("material_news")):
-            gap_limit = 50.0
-            fomo_limit = 75.0
+            gap_limit = 75.0
+            fomo_limit = 100.0
 
         gap = ((open_price - prev_close) / prev_close) * 100.0 if prev_close > 0 else 0.0
         if abs(gap) <= gap_limit:
