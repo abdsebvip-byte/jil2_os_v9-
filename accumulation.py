@@ -117,15 +117,15 @@ class SilentAccumulationScanner:
                 
                 # حساب معدل التذبذب (هل السعر يتحرك في قناة ضيقة أقل من 4%؟)
                 volatility = ((max_p - min_p) / mean_p) * 100
-                is_consolidating = volatility <= 4.0
+                is_consolidating = volatility <= 6.0
                 
                 # حساب حجم التداول لليوم الأخير المكتمل مقارنة بمتوسط الـ 4 أيام السابقة له
                 avg_volume_prev = ticker_df['volume'].iloc[:-1].mean()
                 target_volume = ticker_df['volume'].iloc[-1]
                 
-                # حجم التداول تضاعف بمعدل 4.0x فما فوق لليوم المستهدف
+                # حجم التداول تضاعف بمعدل 2.0x فما فوق لليوم المستهدف
                 volume_multiplier = target_volume / avg_volume_prev if avg_volume_prev > 0 else 1.0
-                is_volume_spike = volume_multiplier >= 4.0
+                is_volume_spike = volume_multiplier >= 2.0
                 
                 # سعر اليوم المستهدف لم يتغير عن اليوم الذي قبله بأكثر من 3.5% (تراكم سيولة بدون حركة سعرية حادة)
                 price_change_target = abs((ticker_df['close'].iloc[-1] - ticker_df['close'].iloc[-2]) / ticker_df['close'].iloc[-2]) * 100

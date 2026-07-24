@@ -39,11 +39,18 @@ class QuantBacktester:
 
         # التأكد من إعادة بناء الفهرس المتعدد وتوحيد التواريخ
         try:
-            df_hist = df_hist.reset_index()
-            if 'symbol' not in df_hist.columns or 'date' not in df_hist.columns:
-                return {"error": "فشل تنسيق البيانات التاريخية المسترجعة."}
-            df_hist['date'] = pd.to_datetime(df_hist['date'], utc=True)
-            df_hist = df_hist.set_index(['symbol', 'date']).sort_index()
+            if isinstance(df_hist.index, pd.MultiIndex) and 'symbol' in df_hist.index.names and 'date' in df_hist.index.names:
+                # التأكد من جعل التواريخ في الفهرس بتوقيت UTC موحد
+                df_hist.index = df_hist.index.set_levels(pd.to_datetime(df_hist.index.levels[1], utc=True), level='date')
+                df_hist = df_hist.sort_index()
+            else:
+                df_hist = df_hist.reset_index()
+                if 'symbol' not in df_hist.columns:
+                    if len(symbols) == 1:
+                        df_hist['symbol'] = symbols[0]
+                if 'date' in df_hist.columns:
+                    df_hist['date'] = pd.to_datetime(df_hist['date'], utc=True)
+                df_hist = df_hist.set_index(['symbol', 'date']).sort_index()
         except Exception as e:
             print(f"Backtester: MultiIndex alignment warning: {str(e)}")
 
@@ -233,6 +240,12 @@ class QuantBacktester:
             if available_slots > 0:
                 for sym in available_symbols:
                     try:
+                        sym_df = df_hist.loc[sym]
+                        stock_hist = sym_df.loc[:current_date]
+                        if len(stock_hist) < 21:
+                            continue
+                        price_today = float(stock_hist['close'].iloc[-1])
+                        
                         # تطبيق خوارزمية التجميع الصامت التاريخية المحدثة
                         if strategy_type == "ACCUMULATION":
                             ticker_df = stock_hist.tail(10) # فحص تماسك 10 أيام
@@ -247,7 +260,7 @@ class QuantBacktester:
                             avg_vol_20 = stock_hist['volume'].tail(20).mean()
                             today_vol = float(stock_hist['volume'].iloc[-1])
                             volume_multiplier = today_vol / avg_vol_20 if avg_vol_20 > 0 else 1.0
-                            is_vol_spike = volume_multiplier >= 4.0 # زيادة حجم التداول التاريخية المحدثة (4 أضعاف)
+                            is_vol_spike = volume_multiplier >= 2.0 # زيادة حجم التداول التاريخية المحدثة (ضعفين)
                             
                             pct_change = ((price_today - float(stock_hist['close'].iloc[-2])) / float(stock_hist['close'].iloc[-2])) * 100
                             is_price_stable = abs(pct_change) <= 3.5 # استقرار السعر اليوم للتجميع الصامت
@@ -271,7 +284,7 @@ class QuantBacktester:
                                         price_today, pct_change, volume_multiplier, volatility_10d, 
                                         prev_rvol, prev_change, f_shares_m, short_pct
                                     )
-                                    if prob >= 60.0:
+                                    if prob >= 50.0:
                                         signals_today.append((sym, price_today, prob))
                                 except:
                                     pass
@@ -286,7 +299,7 @@ class QuantBacktester:
                             vol_today = float(stock_hist['volume'].iloc[-1])
                             
                             is_above_sma = price_today > sma_20
-                            is_vol_breakout = vol_today >= vol_avg_20 * 4.0 # اختراق حجم قوي محدث (4 أضعاف)
+                            is_vol_breakout = vol_today >= vol_avg_20 * 2.0 # اختراق حجم قوي محدث (ضعفين)
                             pct_change = ((price_today - price_prev) / price_prev) * 100
                             is_price_surge = pct_change >= 4.0 # صعود حقيقي
                             
@@ -317,7 +330,7 @@ class QuantBacktester:
                                         price_today, pct_change, rvol, volatility_10d, 
                                         prev_rvol, prev_change, f_shares_m, short_pct
                                     )
-                                    if prob >= 60.0:
+                                    if prob >= 50.0:
                                         signals_today.append((sym, price_today, prob))
                                 except:
                                     pass
