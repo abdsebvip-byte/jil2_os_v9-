@@ -336,7 +336,7 @@ def start_scheduler():
                             success = notifier.send_custom_message(alert_msg)
                             if success:
                                 db.log_sent_alert(sym)
-                                db.log_alert_history(
+                                alert_id = db.log_alert_history(
                                     symbol=sym,
                                     price=price,
                                     score=score,
@@ -346,6 +346,21 @@ def start_scheduler():
                                     status="PENDING",
                                     initial_change=change
                                 )
+                                # Save features and score to signals database
+                                try:
+                                    # Calculate ML score and get features
+                                    ml_score, features = intel.calculate_ml_score(quote, session, anomaly_info)
+                                    import zlib
+                                    blob = zlib.compress(features.tobytes())
+                                    with db.get_connection() as conn:
+                                        cursor = conn.cursor()
+                                        cursor.execute(
+                                            "INSERT INTO signals (id, ts_utc, symbol, features, score, persisted) VALUES (?, ?, ?, ?, ?, 1)",
+                                            (alert_id, datetime.now().isoformat(), sym, blob, float(ml_score))
+                                        )
+                                        conn.commit()
+                                except Exception as db_ex:
+                                    logging.warning(f"Error saving alert features to signals db: {db_ex}")
                                 
                     except Exception as e:
                         logging.warning(f"Background Scanner Symbol Processing Error for {sym}: {e}")

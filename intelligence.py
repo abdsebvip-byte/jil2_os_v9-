@@ -126,6 +126,51 @@ class QuantIntelligence:
             "Supply_Pressure_Index": round(float(pressure_index), 2),
         }
 
+    def calculate_ml_score(self, quote, session, anomaly_info):
+        try:
+            from database import QuantDatabase
+            db = QuantDatabase()
+            weights, bias = db.load_latest_model_weights(num_features=6)
+            
+            price, price_change, prev_close = self._session_price_change(quote, session)
+            volume = self._safe_float(quote.get("regularMarketVolume"), 0.0)
+            bid = self._safe_float(quote.get("bid"), price)
+            ask = self._safe_float(quote.get("ask"), price)
+            
+            mid = (bid + ask) / 2.0
+            spread = (ask - bid) / (mid + 1e-6) if mid > 0 else 0.0
+            idp = volume / (spread + 1e-6)
+            
+            high = self._safe_float(quote.get("regularMarketDayHigh"), price)
+            low = self._safe_float(quote.get("regularMarketDayLow"), price)
+            atr = max(high - low, 1e-6) if high > low else 0.1
+            
+            eta = 0.2
+            if price > mid + eta * spread:
+                sgn = 1.0
+            elif price < mid - eta * spread:
+                sgn = -1.0
+            else:
+                sgn = 0.0
+                
+            ofip = sgn
+            
+            thresholds = self.get_thresholds()
+            lai = idp - thresholds["min_value_traded"]
+            
+            r = np.log(price / prev_close) if prev_close > 0 and price > 0 else 0.0
+            pi = abs(r) / (np.sqrt(volume) + 1e-6)
+            
+            features = np.array([idp, ofip, lai, pi, spread, atr], dtype=np.float32)
+            
+            z = np.dot(weights, features) + bias
+            score = 1.0 / (1.0 + np.exp(-np.clip(z, -20.0, 20.0)))
+            
+            return float(score) * 100.0, features
+        except Exception as e:
+            conf = float(anomaly_info.get("confidence_score", 5.0) if anomaly_info else 5.0)
+            return conf * 10.0, np.zeros(6, dtype=np.float32)
+
     def calculate_7_layer_conviction(self, quote, session, anomaly_info):
         """
         Calculate a 0-100 conviction score for early explosive-stock setups.

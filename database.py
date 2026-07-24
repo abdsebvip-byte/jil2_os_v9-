@@ -8,7 +8,11 @@ class QuantDatabase:
         self.initialize_tables()
 
     def get_connection(self):
-        return sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30)
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = OFF")
+        conn.execute("PRAGMA temp_store = MEMORY")
+        return conn
 
     def initialize_tables(self):
         with self.get_connection() as conn:
@@ -90,6 +94,58 @@ class QuantDatabase:
             except:
                 pass
             
+            # الجداول الجديدة لتدقيق وتعميق الذكاء الاصطناعي
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS signals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts_utc TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    features BLOB NOT NULL,
+                    score REAL NOT NULL,
+                    persisted INTEGER DEFAULT 0
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS labels (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    signal_id INTEGER NOT NULL,
+                    ts_label TEXT NOT NULL,
+                    outcome INTEGER NOT NULL,
+                    price_start REAL,
+                    price_end REAL,
+                    FOREIGN KEY(signal_id) REFERENCES signals(id)
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS models (
+                    version INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    weights BLOB NOT NULL,
+                    bias REAL,
+                    n_samples INTEGER,
+                    val_precision_topk REAL,
+                    notes TEXT
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS metrics_daily (
+                    day TEXT PRIMARY KEY,
+                    signals_total INTEGER,
+                    signals_tp INTEGER,
+                    precision_topk REAL,
+                    avg_lead_time_days REAL,
+                    avg_slippage REAL
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS alerts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts TEXT NOT NULL,
+                    level TEXT,
+                    message TEXT
+                )
+            """)
+
             # جدول سجلات أداء التحسين الذاتي للذكاء الاصطناعي
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS optimization_logs (
@@ -304,6 +360,32 @@ class QuantDatabase:
                 WHERE id = ?
             """, (float(max_price), str(status), int(alert_id)))
             conn.commit()
+
+    def save_model_weights(self, weights, bias, n_samples=0, val_precision=0.0, notes=""):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            blob = weights.astype('float32').tobytes()
+            cursor.execute(
+                "INSERT INTO models (created_at, weights, bias, n_samples, val_precision_topk, notes) VALUES (?, ?, ?, ?, ?, ?)",
+                (datetime.now().isoformat(), blob, float(bias), int(n_samples), float(val_precision), notes)
+            )
+            conn.commit()
+
+    def load_latest_model_weights(self, num_features=6):
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT weights, bias FROM models ORDER BY version DESC LIMIT 1")
+                row = cursor.fetchone()
+                if row:
+                    import numpy as np
+                    weights = np.frombuffer(row[0], dtype=np.float32)
+                    bias = float(row[1])
+                    return weights, bias
+        except Exception as e:
+            print(f"Error loading model weights: {e}")
+        import numpy as np
+        return np.zeros(num_features, dtype=np.float32), 0.0
 
     def calculate_platform_efficiency(self):
         """
