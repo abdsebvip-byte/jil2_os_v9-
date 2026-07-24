@@ -328,6 +328,27 @@ def initialize_interactive_bot():
 
 bot_status = initialize_interactive_bot()
 
+# 🟢 مؤشر نبضات القلب ومراقبة المحرك الخلفي بالثانية
+st.sidebar.markdown("### 🤖 حالة المحرك الخلفي")
+from database import QuantDatabase
+db_hb = QuantDatabase()
+last_hb_str = db_hb.get_last_heartbeat()
+if last_hb_str:
+    last_hb = datetime.fromisoformat(last_hb_str)
+    diff = (datetime.now() - last_hb).total_seconds()
+    
+    from scanner import FreeMarketScanner
+    temp_scanner = FreeMarketScanner()
+    current_sess = temp_scanner.get_current_market_session()
+    max_allowed = 650.0 if current_sess == "NIGHT_CLOSED" else 240.0
+    
+    if diff <= max_allowed:
+        st.sidebar.success(f"🟢 المحرك الخلفي: يعمل بنشاط\n(آخر نبض: منذ {int(diff)} ثانية)")
+    else:
+        st.sidebar.error(f"🔴 المحرك الخلفي: متوقف!\n(آخر نبض: منذ {int(diff/60)} دقيقة)")
+else:
+    st.sidebar.warning("⚠️ المحرك الخلفي: لم يبدأ بعد أو لم يسجل نبضات.")
+
 # 📈 مؤشر كفاءة المنصة المطور (System Efficiency KPI Dashboard)
 st.sidebar.markdown("### 📈 كفاءة المنصة (Efficiency KPI)")
 try:

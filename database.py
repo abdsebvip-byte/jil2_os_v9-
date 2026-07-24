@@ -360,6 +360,23 @@ class QuantDatabase:
             """, (datetime.now().isoformat(), missed_gainers, fomo, gap, whale_ext, whale_reg, catch_rate))
             conn.commit()
 
+    def update_heartbeat(self):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE IF NOT EXISTS system_status (key TEXT PRIMARY KEY, value TEXT)")
+            cursor.execute("INSERT OR REPLACE INTO system_status (key, value) VALUES ('last_heartbeat', ?)", (datetime.now().isoformat(),))
+            conn.commit()
+
+    def get_last_heartbeat(self):
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM system_status WHERE key = 'last_heartbeat'")
+                row = cursor.fetchone()
+                return row[0] if row else None
+        except:
+            return None
+
     def get_latest_optimization_run(self):
         with self.get_connection() as conn:
             cursor = conn.cursor()

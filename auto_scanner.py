@@ -80,6 +80,9 @@ def start_scheduler():
     
     while True:
         try:
+            # تحديث النبض اللحظي للمحرك الخلفي لتأكيد العمل
+            db.update_heartbeat()
+            
             # تحديث حالات الصفقات النشطة بالخلفية
             update_pending_signals_status(db)
             
