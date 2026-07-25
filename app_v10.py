@@ -1300,8 +1300,7 @@ with t7:
         st.markdown("#### 📊 نتائج آخر فحص ومعايرة تلقائية:")
         st.info(f"⏱️ **تاريخ الفحص:** `{latest_run['optimized_at']}` | 🎯 **نسبة اقتناص صعود السوق المقدرة:** `{latest_run['catch_rate']:.1f}%`")
         
-        st.markdown("**📁 الأسهم الأكثر صعوداً التي خضعت للتدقيق اليوم:**")
-        st.code(latest_run["missed_gainers"])
+        st.markdown(latest_run["missed_gainers"])
         
         col_r1, col_r2 = st.columns(2)
         with col_r1:
