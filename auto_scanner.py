@@ -103,6 +103,7 @@ def start_scheduler():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
+    last_optimization_date = ""
     last_full_scan_at = 0.0
     notified_halts = set()
     recommended_halts = set()
@@ -114,6 +115,23 @@ def start_scheduler():
             
             # تحديث حالات الصفقات النشطة بالخلفية
             update_pending_signals_status(db)
+            
+            # تشغيل الجرد اليومي التلقائي للفترات الثلاث (الساعة 9:00 مساءً بتوقيت نيويورك)
+            import pytz
+            est_tz = pytz.timezone('US/Eastern')
+            now_est = datetime.now(est_tz)
+            current_date_str = now_est.strftime("%Y-%m-%d")
+            
+            if now_est.hour >= 21 and current_date_str != last_optimization_date:
+                print(f"Background Scheduler: Running automated daily three-session self-optimization for {current_date_str}...")
+                try:
+                    from self_optimizer import QuantSelfOptimizer
+                    opt = QuantSelfOptimizer()
+                    opt.run_optimization()
+                    last_optimization_date = current_date_str
+                    print("Background Scheduler: Daily self-optimization completed successfully.")
+                except Exception as opt_err:
+                    logging.warning(f"Background Scheduler: Daily self-optimization failed: {opt_err}")
             
             session = scanner.get_current_market_session()
             
