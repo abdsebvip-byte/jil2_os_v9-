@@ -590,16 +590,17 @@ with t_halts:
 
 def get_direct_action(r):
     if r["Is_Dilution"]:
-        return "🔴 تجنب (🚨 تخفيف S-1)"
-    if r["Change_%"] > 40.0:
-        return "🔴 تجنب (🚨 صعود فجوة)"
-    if r["Conviction_Score"] >= 90:
-        return "🟢 شراء فوري (مؤشر 90%+)"
-    if r["Conviction_Score"] >= 80:
-        return "🟢 شراء تدريجي (مؤشر 80%+)"
-    if r["Conviction_Score"] >= 70 and r["RVOL"] >= 2.0:
-        return "⚡ مضاربة سريعة (مؤشر 70%+)"
-    return "🔴 مراقبة فقط"
+        return "🔴 تجنب (🚨 خطر تخفيف)"
+    if r["Change_%"] > 100.0:
+        return "🔴 تجنب (🚨 صعود فجوة تضخم)"
+    score = r["Conviction_Score"]
+    if score >= 90:
+        return "🚀 شراء مؤكد (انفجار شديد القوة)"
+    elif score >= 80:
+        return "🔥 شراء قوي (زخم متسارع)"
+    elif score >= 70:
+        return "📈 شراء للمتابعة (قيد التكوين)"
+    return "⏳ مراقبة وتأكيد"
 
 
 def run_session_pipeline(session_name):
@@ -615,8 +616,10 @@ def run_session_pipeline(session_name):
             hist_features = get_historical_features(symbols)
             ml_classifier = QuantMLClassifier()
             
-            # جلب قائمة الأسهم الأكثر شعبية على Stocktwits
-            stocktwits_trending = fetch_stocktwits_trending()
+            # جلب قائمة الأسهم الأكثر شعبية وبحثاً من ياهو وريديت (رادار الشهرة)
+            retail_trending = scanner.fetch_retail_trending_symbols()
+            yahoo_trending = retail_trending["yahoo"]
+            reddit_trending = retail_trending["reddit"]
             
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -674,7 +677,14 @@ def run_session_pipeline(session_name):
                     has_catalyst = bool(sec_sentiment.get("insider_buy") or sec_sentiment.get("material_news"))
 
                     anomaly_info = anomaly_map.get(sym, {"is_anomaly": False, "confidence_score": 1.0})
-                    score, details, price, change, rvol = intel.calculate_7_layer_conviction(quote, session_name, anomaly_map, sec_sentiment=sec_sentiment)
+                    
+                    is_yahoo = sym in yahoo_trending
+                    is_reddit = sym in reddit_trending
+                    is_trending = is_yahoo or is_reddit
+                    
+                    score, details, price, change, rvol = intel.calculate_7_layer_conviction(
+                        quote, session_name, anomaly_info, sec_sentiment=sec_sentiment, is_trending=is_trending
+                    )
                     
                     # حساب احتمالية الانفجار عبر نموذج التعلم الآلي المطور بـ 8 ميزات (مع الفلوت والبيع المكشوف)
                     f_info = hist_features.get(sym, {
@@ -697,8 +707,7 @@ def run_session_pipeline(session_name):
                         short_percent=f_info["short_percent"]
                     )
                     
-                    # التحقق من شعبية السهم على Stocktwits وحالة الإيقاف
-                    is_trending = sym in stocktwits_trending
+                    # التحقق من حالة الإيقاف
                     is_halted = sym in active_halts
                     halt_reason = active_halts[sym] if is_halted else ""
                     
@@ -717,11 +726,25 @@ def run_session_pipeline(session_name):
                     if is_dilution:
                         score = max(0, score - 70)
                             
-                    # 4. تعديل النقاط بناءً على زخم التداول الاجتماعي (Stocktwits) +10%
+                    # 4. تعديل النقاط بناءً على زخم التداول الاجتماعي والبحث +10%
                     # نمنح الزخم الاجتماعي القوة فقط إذا كانت المؤشرات الفنية مستقرة أصلاً (score >= 70) لمنع الـ FOMO والتلاعب
                     if is_trending and score >= 70:
                         score = min(100, score + 10)
                     
+                    # تحديد نصوص الشهرة والبحث والتوجيه
+                    popularity_lbl = "➖ طبيعي"
+                    if is_yahoo and is_reddit:
+                        popularity_lbl = "🔥 شهرة عالية جداً (بحث ونقاش مكثف)"
+                    elif is_yahoo:
+                        popularity_lbl = "📈 بحث نشط (ياهو فاينانس)"
+                    elif is_reddit:
+                        popularity_lbl = "💬 نقاشات متداولة (ريديت)"
+                        
+                    action_lbl = get_direct_action({
+                        "Is_Dilution": is_dilution,
+                        "Change_%": change,
+                        "Conviction_Score": score
+                    })
                     
                     opportunities.append({
                         "Symbol": sym,
@@ -742,7 +765,9 @@ def run_session_pipeline(session_name):
                         "Short_Pct": f_info["short_percent"],
                         "Squeeze_Score": f_info.get("squeeze_score", 0),
                         "Has_Catalyst": has_catalyst,
-                        "Matches": details
+                        "Matches": details,
+                        "Popularity": popularity_lbl,
+                        "Action_Directive": action_lbl
                     })
                 except Exception as e:
                     continue
@@ -904,8 +929,8 @@ def run_session_pipeline(session_name):
                     df_exp_display["تحذير التخفيف"] = df_exp_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
                     df_exp_display["مؤشر الضغط"] = df_exp_display["Squeeze_Score"].apply(lambda x: f"💥 {x}%" if x >= 80 else f"⚡ {x}%" if x >= 50 else f"🟢 {x}%")
                     
-                    df_exp_table = df_exp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة الإيقاف", "تحذير التخفيف", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "مسار الانفجار", "التوجيه المباشر"]].copy()
-                    df_exp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة التداول", "التخفيف (Dilution)", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "مسار الانفجار", "التوجيه المباشر"]
+                    df_exp_table = df_exp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة الإيقاف", "تحذير التخفيف", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "مسار الانفجار", "Popularity", "Action_Directive"]].copy()
+                    df_exp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة التداول", "التخفيف (Dilution)", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "مسار الانفجار", "الشهرة والبحث", "توجيه الشراء"]
                     st.markdown(render_premium_table(df_exp_table), unsafe_allow_html=True)
                 else:
                     st.info("ℹ️ لا توجد حالياً أسهم مطابقة لمعايير الانفجار السعري الصارمة في هذه اللحظة (RVOL >= 4.0, Float <= 15M, Short >= 10% أو فلوت <= 5M مع محفز SEC إيجابي).")
@@ -928,8 +953,8 @@ def run_session_pipeline(session_name):
                     df_scalp_display["تحذير التخفيف"] = df_scalp_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
                     df_scalp_display["مؤشر الضغط"] = df_scalp_display["Squeeze_Score"].apply(lambda x: f"💥 {x}%" if x >= 80 else f"⚡ {x}%" if x >= 50 else f"🟢 {x}%")
                     
-                    df_scalp_table = df_scalp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "حالة الإيقاف", "تحذير التخفيف", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "التوجيه المباشر"]].copy()
-                    df_scalp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "حالة التداول", "التخفيف (Dilution)", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "التوجيه المباشر"]
+                    df_scalp_table = df_scalp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "حالة الإيقاف", "تحذير التخفيف", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "Popularity", "Action_Directive"]].copy()
+                    df_scalp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "حالة التداول", "التخفيف (Dilution)", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "الشهرة والبحث", "توجيه الشراء"]
                     st.markdown(render_premium_table(df_scalp_table), unsafe_allow_html=True)
                 else:
                     st.info("ℹ️ لا توجد حالياً أسهم نشطة للمضاربة السريعة اليومية.")
@@ -952,8 +977,8 @@ def run_session_pipeline(session_name):
                         df_ov_display["احتمالية الانفجار (ML)"] = df_ov_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
                         df_ov_display["الأسهم الحرة"] = df_ov_display["Float_M"].apply(lambda x: f"{x:.1f}M")
                         
-                        df_ov_table = df_ov_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "SEC_Tags", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "التوجيه المباشر"]].copy()
-                        df_ov_table.columns = ["رمز السهم", "السعر المسائي", "التغير المسائي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "المحفز الجوهري", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "التوجيه المباشر"]
+                        df_ov_table = df_ov_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "SEC_Tags", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "Popularity", "Action_Directive"]].copy()
+                        df_ov_table.columns = ["رمز السهم", "السعر المسائي", "التغير المسائي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "المحفز الجوهري", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "الشهرة والبحث", "توجيه الشراء"]
                         st.markdown(render_premium_table(df_ov_table), unsafe_allow_html=True)
                     else:
                         st.info("ℹ️ لا توجد حالياً أسهم مستوفية لشروط التراكم الليلي للغد (صعود >= 5%، حجم نسبي >= 3x، ومحفز SEC إيجابي).")

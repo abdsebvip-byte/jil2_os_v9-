@@ -189,3 +189,49 @@ class FreeMarketScanner:
             })
         await asyncio.sleep(0.02)
         return formatted_quotes
+
+    def fetch_retail_trending_symbols(self):
+        """
+        Fetch the top popular and trending tickers on Yahoo Finance and Reddit WallStreetBets.
+        Returns a dict: {'yahoo': set(), 'reddit': set()}
+        """
+        import requests
+        
+        yahoo_trending = set()
+        reddit_trending = set()
+        
+        # 1. Fetch from Yahoo Finance Trending
+        url_yf = "https://query1.finance.yahoo.com/v1/finance/trending/US"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        try:
+            r = requests.get(url_yf, headers=headers, timeout=5)
+            if r.status_code == 200:
+                data = r.json().get("finance", {}).get("result", [])
+                for item in data:
+                    quotes = item.get("quotes", [])
+                    for q in quotes:
+                        sym = q.get("symbol")
+                        if sym and sym.isalpha():
+                            yahoo_trending.add(sym)
+        except Exception as e:
+            print(f"fetch_retail_trending_symbols: Yahoo error ({e})")
+            
+        # 2. Fetch from Reddit WSB (Tradestie)
+        url_reddit = "https://tradestie.com/api/v1/apps/reddit"
+        try:
+            r = requests.get(url_reddit, timeout=5)
+            if r.status_code == 200:
+                data = r.json()
+                for item in data:
+                    sym = item.get("ticker")
+                    if sym and sym.isalpha():
+                        reddit_trending.add(sym)
+        except Exception as e:
+            print(f"fetch_retail_trending_symbols: Reddit error ({e})")
+            
+        return {
+            "yahoo": yahoo_trending,
+            "reddit": reddit_trending
+        }

@@ -171,7 +171,7 @@ class QuantIntelligence:
             conf = float(anomaly_info.get("confidence_score", 5.0) if anomaly_info else 5.0)
             return conf * 10.0, np.zeros(6, dtype=np.float32)
 
-    def calculate_7_layer_conviction(self, quote, session, anomaly_info, sec_sentiment=None):
+    def calculate_7_layer_conviction(self, quote, session, anomaly_info, sec_sentiment=None, is_trending=False):
         """
         Calculate a 0-100 conviction score for early explosive-stock setups.
         """
@@ -264,6 +264,13 @@ class QuantIntelligence:
             details["Anomaly_Confirmation"] = True
         else:
             details["Anomaly_Confirmation"] = False
+
+        # Retail Popularity/Trending Boost (v24.8)
+        if is_trending:
+            score += 8
+            details["Retail_Trending_Boost"] = True
+        else:
+            details["Retail_Trending_Boost"] = False
 
         final_score = max(0, min(100, score))
         return final_score, details, price, price_change, rvol

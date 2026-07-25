@@ -98,6 +98,20 @@ def start_scheduler():
     halt_poll_seconds = _env_int("HALT_POLL_SECONDS", 60, 15)
     full_scan_seconds = _env_int("FULL_SCAN_SECONDS", 180, 60)
     closed_sleep_seconds = _env_int("CLOSED_MARKET_SLEEP_SECONDS", 600, 60)
+
+def get_direct_action(r):
+    if r.get("Is_Dilution"):
+        return "🔴 تجنب (🚨 خطر تخفيف)"
+    if r.get("Change_%", 0.0) > 100.0:
+        return "🔴 تجنب (🚨 صعود فجوة تضخم)"
+    score = r.get("Conviction_Score", 0)
+    if score >= 90:
+        return "🚀 شراء مؤكد (انفجار شديد القوة)"
+    elif score >= 80:
+        return "🔥 شراء قوي (زخم متسارع)"
+    elif score >= 70:
+        return "📈 شراء للمتابعة (قيد التكوين)"
+    return "⏳ مراقبة وتأكيد"
     
     # Initialize async loop inside this daemon thread
     loop = asyncio.new_event_loop()
@@ -275,6 +289,11 @@ def start_scheduler():
                     time.sleep(halt_poll_seconds)
                     continue
                     
+                # جلب رادار الشهرة (الأكثر بحثاً ونقاشاً) من Yahoo & Reddit
+                retail_trending = scanner.fetch_retail_trending_symbols()
+                yahoo_trending = retail_trending["yahoo"]
+                reddit_trending = retail_trending["reddit"]
+                
                 anomaly_map = intel.fit_anomaly_detector(raw_data, session)
                 
                 for quote in raw_data:
@@ -330,7 +349,14 @@ def start_scheduler():
 
                         # Calculate conviction score and features with catalyst context
                         anomaly_info = anomaly_map.get(sym, {"is_anomaly": False, "confidence_score": 1.0})
-                        score, details, price, change, rvol = intel.calculate_7_layer_conviction(quote, session, anomaly_map, sec_sentiment=sec_sentiment)
+                        
+                        is_yahoo = sym in yahoo_trending
+                        is_reddit = sym in reddit_trending
+                        is_trending = is_yahoo or is_reddit
+                        
+                        score, details, price, change, rvol = intel.calculate_7_layer_conviction(
+                            quote, session, anomaly_info, sec_sentiment=sec_sentiment, is_trending=is_trending
+                        )
 
                         # Trigger alert if algorithm conviction is strong
                         if score >= 80 and anomaly_info["confidence_score"] >= 5.0:
@@ -349,6 +375,9 @@ def start_scheduler():
                             # 2. Material event (Form 8-K) boost (+10%)
                             if sec_sentiment.get("material_news"):
                                 score = min(100, score + 10)
+                            # 3. Social popularity and search boost (+10%)
+                            if is_trending and score >= 70:
+                                score = min(100, score + 10)
                                 
                             # Add custom notes for positive catalysts
                             notes = ""
@@ -356,6 +385,21 @@ def start_scheduler():
                                 notes += "\n⭐ *تنبيه المطلعين:* تم رصد شراء مسؤولين لأسهمهم (Form 4)!"
                             if sec_sentiment["material_news"]:
                                 notes += "\n📝 *حدث جوهري:* تم رصد أخبار أو شراكة جديدة (Form 8-K)!"
+                                
+                            # Add custom notes for popularity
+                            if is_yahoo and is_reddit:
+                                notes += "\n🔥 *الشهرة والبحث:* عليه بحث ونقاش مكثف جداً في ياهو وريديت!"
+                            elif is_yahoo:
+                                notes += "\n📈 *الشهرة والبحث:* بحث نشط على ياهو فاينانس!"
+                            elif is_reddit:
+                                notes += "\n💬 *الشهرة والبحث:* نقاش متداول في منتدى ريديت!"
+                                
+                            action_lbl = get_direct_action({
+                                "Is_Dilution": sec_sentiment["dilution_warning"],
+                                "Change_%": change,
+                                "Conviction_Score": score
+                            })
+                            notes += f"\n🚦 *توجيه الشراء:* {action_lbl}"
                                 
                             target_pct = intel.calculate_dynamic_target(score, anomaly_info["confidence_score"] * 10.0)
                             
