@@ -247,11 +247,13 @@ def start_scheduler():
                 
                 symbols = scanner.fetch_all_us_symbols()
                 if not symbols:
+                    notifier.send_custom_message("🚨 *تنبيه تقني عاجل:* توقف تام في قنوات جلب رموز الأسعار اللحظية (TradingView & Yahoo Fallback). السيرفر غير قادر على بدء دورة المسح.")
                     time.sleep(halt_poll_seconds)
                     continue
                     
                 raw_data = loop.run_until_complete(scanner.scan_entire_market())
                 if not raw_data:
+                    notifier.send_custom_message("🚨 *تنبيه تقني عاجل:* تم جلب الرموز ولكن مصفوفة تفاصيل الأسعار اللحظية فارغة. تحقق من استجابة خوادم البيانات.")
                     time.sleep(halt_poll_seconds)
                     continue
                     
