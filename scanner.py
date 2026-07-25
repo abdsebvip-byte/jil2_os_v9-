@@ -70,7 +70,11 @@ class FreeMarketScanner:
                 "float_shares_outstanding",
                 "average_volume_30d_calc",
                 "VWAP",
-                "Value.Traded"
+                "Value.Traded",
+                "premarket_close",
+                "premarket_change",
+                "postmarket_close",
+                "postmarket_change"
             ],
             "sort": {"sortBy": "change", "sortOrder": "desc"},
             "range": [0, 100]
@@ -108,10 +112,10 @@ class FreeMarketScanner:
                             "averageDailyVolume3Month": float(d[6] or 100000.0),
                             "regularMarketPreviousClose": float(d[1] or 0.0) / (1.0 + (float(d[2] or 0.0) / 100.0)) if d[2] else float(d[1] or 0.0),
                             "regularMarketOpen": float(d[1] or 0.0),
-                            "preMarketPrice": float(d[1] or 0.0),
-                            "preMarketChangePercent": float(d[2] or 0.0),
-                            "postMarketPrice": float(d[1] or 0.0),
-                            "postMarketChangePercent": float(d[2] or 0.0),
+                            "preMarketPrice": float(d[9] or d[1] or 0.0) if len(d) > 9 and d[9] is not None else float(d[1] or 0.0),
+                            "preMarketChangePercent": float(d[10] or 0.0) if len(d) > 10 and d[10] is not None else 0.0,
+                            "postMarketPrice": float(d[11] or d[1] or 0.0) if len(d) > 11 and d[11] is not None else float(d[1] or 0.0),
+                            "postMarketChangePercent": float(d[12] or 0.0) if len(d) > 12 and d[12] is not None else 0.0,
                             "bid": float(d[1] or 0.0),
                             "ask": float(d[1] or 0.0),
                             "bidSize": 100.0,

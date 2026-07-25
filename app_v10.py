@@ -656,7 +656,7 @@ def run_session_pipeline(session_name):
                         price = _safe_float(quote.get("postMarketPrice"), price)
                         change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else change
 
-                    if price <= 0.0 or price > 20.0 or change < 3.0 or change > 45.0:
+                    if price <= 0.0 or price > 20.0 or change < 3.0 or change > 100.0:
                         continue
                         
                     # تصفية إضافية لمنع عرض الأسهم الخاملة التي لا تتداول في الجلسات الممتدة

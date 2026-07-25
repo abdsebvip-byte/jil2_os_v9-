@@ -279,8 +279,8 @@ def start_scheduler():
                             price = _safe_float(quote.get("postMarketPrice"), price)
                             change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else change
 
-                        # Price/change filters aligned with the explosive-stock mandate.
-                        if price <= 0.0 or price > 20.0 or change < 5.0 or change > 45.0:
+                        # Price/change filters aligned with the explosive-stock mandate. (تم التوسيع لـ 100% للسماح بالانفجارات الفجائية الموثقة بالمحفزات)
+                        if price <= 0.0 or price > 20.0 or change < 5.0 or change > 100.0:
                             continue
 
                         # Check RVOL and Float before loading news to save API bandwidth
