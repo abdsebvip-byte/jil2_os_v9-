@@ -73,14 +73,18 @@ class QuantSelfOptimizer:
             print(f"Error fetching top daily gainers for {session_type}: {e}")
         return []
 
-    def diagnose_symbol(self, symbol, current_thresholds, session_type="REGULAR_SESSION"):
+    def diagnose_symbol(self, symbol, current_thresholds, session_type="REGULAR_SESSION", price_data=None):
         """
         Analyze why a specific symbol was skipped under the current thresholds for a given session.
         """
-        import yahooquery as yq
+        if price_data is None:
+            import yahooquery as yq
+            try:
+                ticker = yq.Ticker(symbol)
+                price_data = ticker.price.get(symbol, {})
+            except Exception as e:
+                return f"Diagnostic Error: {e}"
         try:
-            ticker = yq.Ticker(symbol)
-            price_data = ticker.price.get(symbol, {})
             if not isinstance(price_data, dict):
                 return "No data available from Yahoo Query"
                 
@@ -197,13 +201,23 @@ class QuantSelfOptimizer:
                 diagnostics_md += "| - | - | - | لا توجد بيانات مسجلة حالياً | - | - |\n\n"
                 continue
                 
+            # Batch fetch prices for all gainers in this session
+            import yahooquery as yq
+            try:
+                batch_ticker = yq.Ticker(gainers)
+                batch_price_details = batch_ticker.price
+            except Exception as e:
+                batch_price_details = {}
+
             for sym in gainers:
-                diag_reason = self.diagnose_symbol(sym, current, sess_id)
+                p_data = batch_price_details.get(sym) if isinstance(batch_price_details, dict) else None
+                if not isinstance(p_data, dict):
+                    p_data = {}
+                
+                diag_reason = self.diagnose_symbol(sym, current, sess_id, price_data=p_data)
                 price = 0.0
                 change = 0.0
                 try:
-                    import yahooquery as yq
-                    p_data = yq.Ticker(sym).price.get(sym, {})
                     price = float(p_data.get("regularMarketPrice") or 0.0)
                     prev_close = float(p_data.get("regularMarketPreviousClose") or price)
                     change = ((price - prev_close) / prev_close * 100.0) if prev_close > 0 else 0.0
@@ -247,9 +261,20 @@ class QuantSelfOptimizer:
         
         # حفظ التقرير كـ Artifact على القرص
         try:
-            artifact_path = "C:/Users/sahar/.gemini/antigravity/brain/52699985-c9f0-4d72-81cd-932d5a1102cf/missed_gainers_report.md"
+            brain_dir = os.environ.get("BRAIN_DIR")
+            if not brain_dir:
+                parent_brain = "C:/Users/sahar/.gemini/antigravity/brain"
+                if os.path.exists(parent_brain):
+                    subdirs = [os.path.join(parent_brain, d) for d in os.listdir(parent_brain) if os.path.isdir(os.path.join(parent_brain, d))]
+                    if subdirs:
+                        subdirs.sort(key=os.path.getmtime, reverse=True)
+                        brain_dir = subdirs[0]
+            if not brain_dir or not os.path.exists(brain_dir):
+                brain_dir = "."
+            artifact_path = os.path.join(brain_dir, "missed_gainers_report.md").replace("\\", "/")
             with open(artifact_path, "w", encoding="utf-8") as f:
                 f.write(diagnostics_md)
+            print(f"Saved artifact report to: {artifact_path}")
         except Exception as e:
             print(f"Error saving artifact: {e}")
             
