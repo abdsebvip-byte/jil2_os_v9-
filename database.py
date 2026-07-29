@@ -18,6 +18,9 @@ class QuantDatabase:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
+            # جدول حالة النظام والنبضات الحية
+            cursor.execute("CREATE TABLE IF NOT EXISTS system_status (key TEXT PRIMARY KEY, value TEXT)")
+            
             # جدول المحفظة الافتراضية (المراكز المفتوحة)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS portfolio (
