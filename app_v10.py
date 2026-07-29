@@ -911,9 +911,10 @@ def run_session_pipeline(session_name):
                     squeeze_track = (df_opportunities["Float_M"] <= 15.0) & (df_opportunities["Short_Pct"] >= 10.0)
                     catalyst_track = (df_opportunities["Float_M"] <= 5.0) & (df_opportunities["Has_Catalyst"] == True)
                     
+                    rvol_req = 0.05 if session_name in ["PRE_MARKET", "AFTER_HOURS"] else 4.0
                     df_explosive = df_opportunities[
                         (df_opportunities["Conviction_Score"] >= 80) &
-                        (df_opportunities["RVOL"] >= 4.0) &
+                        (df_opportunities["RVOL"] >= rvol_req) &
                         (
                             ((df_opportunities["ML_Probability"] >= 60.0) & squeeze_track) |
                             ((df_opportunities["ML_Probability"] >= 50.0) & catalyst_track)

@@ -333,7 +333,12 @@ def start_scheduler():
                         volume = _safe_float(quote.get("regularMarketVolume"), 0.0)
                         avg_volume = _safe_float(quote.get("averageDailyVolume3Month"), 100000.0)
                         rvol = volume / avg_volume if avg_volume > 0 else 1.0
-                        if rvol < thresholds["rvol_min"]:
+                        
+                        rvol_limit = thresholds["rvol_min"]
+                        if session in ["PRE_MARKET", "AFTER_HOURS"]:
+                            rvol_limit = 0.05 # خفض شرط الحجم النسبي في الفترات الممتدة نظراً لضعف السيولة بطبيعتها
+                            
+                        if rvol < rvol_limit:
                             continue
 
                         # Session specific filters
