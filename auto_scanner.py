@@ -4,6 +4,9 @@ import asyncio
 import os
 from datetime import datetime
 import logging
+from dotenv import load_dotenv
+load_dotenv("config.env")
+
 from scanner import FreeMarketScanner
 from intelligence import QuantIntelligence
 from notifier import TelegramNotifier
@@ -216,6 +219,12 @@ def start_scheduler():
                             # Determine dynamic target percentage
                             target_pct = intel.calculate_dynamic_target(score, 70.0)
                             
+                            action_lbl = get_direct_action({
+                                "Is_Dilution": is_dilution,
+                                "Change_%": change,
+                                "Conviction_Score": score
+                            })
+                            
                             notes = ""
                             if sec_sentiment["insider_buy"]:
                                 notes += "\n⭐ *تنبيه المطلعين:* تم رصد شراء مسؤولين لأسهمهم (Form 4)!"
@@ -225,10 +234,11 @@ def start_scheduler():
                             alert_text = (
                                 f"🎯 *توصية صفقة استئناف موصى بها!* 🎯\n\n"
                                 f"🏢 *رمز السهم:* `{sym}`\n"
+                                f"🚦 *توجيه الشراء:* {action_lbl}\n\n"
                                 f"📈 *نوع الإيقاف:* `صعود حاد مفاجئ` ({reason})\n"
                                 f"💵 *سعر الدخول المقترح:* `${price:.2f}` (عند الاستئناف)\n"
                                 f"📊 *نسبة التغير اليومي:* `+{change:.2f}%`\n"
-                                f"🔊 *الحجم النسبي RVOL:* `{rvol:.2f}x`\n\n"
+                                f"🔊 *الحجم النسبي RVOL:* `{rvol:.2f}x`\n"
                                 f"🔥 *نقاط تطابق الخوارزمية:* `{score}%`"
                                 f"{notes}\n\n"
                                 f"🎯 *الهدف المقترح ديناميكياً:* `+{target_pct}%` (سعر: `${price * (1 + target_pct/100.0):.2f}`)\n"
@@ -259,13 +269,15 @@ def start_scheduler():
                 for sym in list(notified_halts):
                     if sym not in active_halts:
                         if sym in recommended_halts:
-                            res_text = (
-                                f"🟢 *استئناف التداول: عاد سهم {sym} للعمل الآن!* 🟢\n\n"
-                                f"📈 راقب حركة شمعة الدقيقة الأولى لتأكيد اتجاه السيولة."
-                            )
-                            success = notifier.send_custom_message(res_text)
-                            if success:
-                                db.log_alert_history(sym, 0.0, 100.0, "استئناف التداول")
+                            send_res = os.getenv("SEND_RESUMPTION_ALERTS", "FALSE").upper() == "TRUE"
+                            if send_res:
+                                res_text = (
+                                    f"🟢 *استئناف التداول: عاد سهم {sym} للعمل الآن!* 🟢\n\n"
+                                    f"📈 راقب حركة شمعة الدقيقة الأولى لتأكيد اتجاه السيولة."
+                                )
+                                success = notifier.send_custom_message(res_text)
+                                if success:
+                                    db.log_alert_history(sym, 0.0, 100.0, "استئناف التداول")
                             recommended_halts.discard(sym)
                         resumed_syms.append(sym)
                 for sym in resumed_syms:
@@ -406,16 +418,16 @@ def start_scheduler():
                                 "Change_%": change,
                                 "Conviction_Score": score
                             })
-                            notes += f"\n🚦 *توجيه الشراء:* {action_lbl}"
                                 
                             target_pct = intel.calculate_dynamic_target(score, anomaly_info["confidence_score"] * 10.0)
                             
                             alert_msg = (
                                 f"🎯 *فرصة انفجار سعري مكتشفة!*\n\n"
                                 f"🏢 *رمز السهم:* `{sym}`\n"
+                                f"🚦 *توجيه الشراء:* {action_lbl}\n\n"
                                 f"💵 *السعر الحالي:* `${price:.4f}`\n"
                                 f"📈 *التغير اليومي:* `+{change:.2f}%`\n"
-                                f"🔊 *الحجم النسبي RVOL:* `{rvol:.2f}x`\n\n"
+                                f"🔊 *الحجم النسبي RVOL:* `{rvol:.2f}x`\n"
                                 f"🔥 *نسبة تطابق الخوارزمية:* `{score}%`\n"
                                 f"⭐ *مؤشر ثقة السيولة (ML):* `{anomaly_info['confidence_score']}/10`"
                                 f"{notes}\n\n"
