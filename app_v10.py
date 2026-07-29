@@ -331,6 +331,23 @@ def initialize_interactive_bot():
 
 bot_status = initialize_interactive_bot()
 
+# 📈 مؤشر اتجاه السوق العام (Market Trend Correlation)
+st.sidebar.markdown("### 🌐 اتجاه السوق العام (SPY/QQQ)")
+try:
+    from intraday_tracker import get_market_trend
+    trend = get_market_trend()
+    spy_val = trend["spy_change"]
+    qqq_val = trend["qqq_change"]
+    
+    if trend["status"] == "GREEN":
+        st.sidebar.success(f"🟢 السوق صاعد ومستقر\n\n(SPY: {spy_val:+.2f}% | QQQ: {qqq_val:+.2f}%)")
+    elif trend["status"] == "YELLOW":
+        st.sidebar.warning(f"🟡 السوق حذر وجانبي\n\n(SPY: {spy_val:+.2f}% | QQQ: {qqq_val:+.2f}%)")
+    else:
+        st.sidebar.error(f"🔴 السوق هابط ومخاطر عالية\n\n(SPY: {spy_val:+.2f}% | QQQ: {qqq_val:+.2f}%)")
+except Exception as trend_ex:
+    st.sidebar.info("ℹ️ اتجاه السوق: غير متوفر مؤقتاً")
+
 # 🟢 مؤشر نبضات القلب ومراقبة المحرك الخلفي بالثانية
 st.sidebar.markdown("### 🤖 حالة المحرك الخلفي")
 from database import QuantDatabase
@@ -760,6 +777,7 @@ def run_session_pipeline(session_name):
                         "Is_Dilution": is_dilution,
                         "Float_M": f_info["float_shares_m"],
                         "Short_Pct": f_info["short_percent"],
+                        "Days_To_Cover": f_info.get("days_to_cover", 0.0),
                         "Squeeze_Score": f_info.get("squeeze_score", 0),
                         "Has_Catalyst": has_catalyst,
                         "Matches": details,
@@ -925,12 +943,13 @@ def run_session_pipeline(session_name):
                     df_exp_display["احتمالية الانفجار (ML)"] = df_exp_display["ML_Probability"].apply(format_ml_prob)
                     df_exp_display["الأسهم الحرة"] = df_exp_display["Float_M"].apply(lambda x: f"{x:.1f}M")
                     df_exp_display["نسبة الشورت"] = df_exp_display["Short_Pct"].apply(lambda x: f"{x:.1f}%")
+                    df_exp_display["أيام التغطية (DTC)"] = df_exp_display["Days_To_Cover"].apply(lambda x: f"⏱️ {x:.1f} يوم")
                     df_exp_display["حالة الإيقاف"] = df_exp_display.apply(lambda r: f"🚨 موقوف ({r['Halt_Reason']})" if r["Is_Halted"] else "🟢 نشط", axis=1)
                     df_exp_display["تحذير التخفيف"] = df_exp_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
                     df_exp_display["مؤشر الضغط"] = df_exp_display["Squeeze_Score"].apply(lambda x: f"💥 {x}%" if x >= 80 else f"⚡ {x}%" if x >= 50 else f"🟢 {x}%")
                     
-                    df_exp_table = df_exp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة الإيقاف", "تحذير التخفيف", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "مسار الانفجار", "Popularity", "Action_Directive"]].copy()
-                    df_exp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "نسبة الشورت", "حالة التداول", "التخفيف (Dilution)", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "مسار الانفجار", "الشهرة والبحث", "توجيه الشراء"]
+                    df_exp_table = df_exp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "نسبة الشورت", "أيام التغطية (DTC)", "حالة الإيقاف", "تحذير التخفيف", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "مسار الانفجار", "Popularity", "Action_Directive"]].copy()
+                    df_exp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "نسبة الشورت", "أيام التغطية (DTC)", "حالة التداول", "التخفيف (Dilution)", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "مسار الانفجار", "الشهرة والبحث", "توجيه الشراء"]
                     st.markdown(render_premium_table(df_exp_table), unsafe_allow_html=True)
                 else:
                     st.info("ℹ️ لا توجد حالياً أسهم مطابقة لمعايير الانفجار السعري الصارمة في هذه اللحظة (RVOL >= 4.0, Float <= 15M, Short >= 10% أو فلوت <= 5M مع محفز SEC إيجابي).")
@@ -1041,6 +1060,48 @@ with t5:
         st.dataframe(df_port, use_container_width=True, hide_index=True)
     else:
         st.write("💼 المحفظة فارغة حالياً. أرسل أمراً للبوت مثل `شراء CLSK 10` للبدء!")
+
+    # ➕ لوحة تسجيل الصفقات اليدوية (Manual Trade Entry Form)
+    st.write("---")
+    st.markdown("### ✍️ لوحة تسجيل الصفقات يدوياً (Manual Trade Entry)")
+    with st.expander("➕ تسجيل عملية شراء/بيع جديدة في المحفظة"):
+        with st.form("manual_trade_form", clear_on_submit=True):
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                trade_type = st.selectbox("نوع العملية", ["شراء (BUY)", "بيع (SELL)"])
+            with col2:
+                trade_symbol = st.text_input("رمز السهم", placeholder="مثال: GWAV").upper().strip()
+            with col3:
+                trade_qty = st.number_input("الكمية", min_value=1, value=10, step=1)
+            with col4:
+                trade_price = st.number_input("سعر التنفيذ ($)", min_value=0.0001, value=1.0000, format="%.4f", step=0.1)
+                
+            submit_trade = st.form_submit_button("💾 تسجيل الصفقة وحفظها في قاعدة البيانات")
+            if submit_trade:
+                if not trade_symbol:
+                    st.error("⚠️ يرجى إدخال رمز السهم أولاً.")
+                else:
+                    try:
+                        if "شراء" in trade_type:
+                            cost = trade_qty * trade_price
+                            if cash < cost:
+                                st.error(f"❌ السيولة النقدية غير كافية. التكلفة: {cost:.2f}$ | السيولة المتاحة: {cash:.2f}$")
+                            else:
+                                success, msg = db.execute_buy(trade_symbol, trade_qty, trade_price)
+                                if success:
+                                    st.success(msg)
+                                    st.rerun()
+                                else:
+                                    st.error(msg)
+                        else:
+                            success, msg = db.execute_sell(trade_symbol, trade_qty, trade_price)
+                            if success:
+                                    st.success(msg)
+                                    st.rerun()
+                            else:
+                                    st.error(msg)
+                    except Exception as e:
+                        st.error(f"❌ حدث خطأ أثناء التسجيل: {e}")
 
     st.write("---")
     st.markdown("### 📊 لوحة تقييم كفاءة إشارات التداول (Performance Audit Dashboard)")
