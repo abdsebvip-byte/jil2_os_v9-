@@ -34,20 +34,6 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-def fetch_stocktwits_trending():
-    """
-    سحب قائمة الأسهم الأكثر تداولاً وجدلاً حالياً من Stocktwits (Trending Symbols)
-    """
-    try:
-        url = "https://api.stocktwits.com/api/2/trending/symbols.json"
-        res = requests.get(url, timeout=5)
-        if res.status_code == 200:
-            symbols = [item["symbol"] for item in res.json().get("symbols", [])]
-            return set(symbols)
-    except Exception as e:
-        logging.warning(f"Stocktwits API Error: {e}")
-    return set()
-
 # 1. إعداد الصفحة والأنماط البصرية الراقية (Premium Dark Tech Theme)
 st.set_page_config(page_title="منظومة رادار السيولة التراكمية v10.0", layout="wide")
 
@@ -886,7 +872,7 @@ def run_session_pipeline(session_name):
                     ("درع الفجوة", "Gap_Shield"),
                     ("منطقة الاختراق", "Early_Breakout"),
                     ("تسارع الحجم RVOL", "RVOL_Acceleration"),
-                    ("تتبع الحيتان", "Whale_Block"),
+                    ("زخم السيولة (RVOL/VWAP)", "Whale_Block"),
                     ("عدم توازن السيولة", "OBI_Imbalance"),
                     ("محفز الأخبار", "News_Catalyst")
                 ]
