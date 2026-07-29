@@ -146,8 +146,8 @@ class QuantMLClassifier:
                 pass
                 
         if len(features_list) < 100:
-            print("QuantMLClassifier: Insufficient data samples. Using fallback model.")
-            self.model = self._create_fallback_model()
+            print("QuantMLClassifier: Insufficient data samples. Keeping model as None.")
+            self.model = None
             return
             
         X = np.array(features_list)
