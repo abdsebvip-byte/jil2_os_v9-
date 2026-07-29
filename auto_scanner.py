@@ -84,6 +84,20 @@ def update_pending_signals_status(db):
     except Exception as e:
         logging.warning(f"Signal Tracker Update Error: {e}")
 
+def get_direct_action(r):
+    if r.get("Is_Dilution"):
+        return "🔴 تجنب (🚨 خطر تخفيف)"
+    if r.get("Change_%", 0.0) > 100.0:
+        return "🔴 تجنب (🚨 صعود فجوة تضخم)"
+    score = r.get("Conviction_Score", 0)
+    if score >= 90:
+        return "🚀 شراء مؤكد (انفجار شديد القوة)"
+    elif score >= 80:
+        return "🔥 شراء قوي (زخم متسارع)"
+    elif score >= 70:
+        return "📈 شراء للمتابعة (قيد التكوين)"
+    return "⏳ مراقبة وتأكيد"
+
 def start_scheduler():
     """
     Main entry point for the background scheduler.
@@ -98,20 +112,6 @@ def start_scheduler():
     halt_poll_seconds = _env_int("HALT_POLL_SECONDS", 60, 15)
     full_scan_seconds = _env_int("FULL_SCAN_SECONDS", 180, 60)
     closed_sleep_seconds = _env_int("CLOSED_MARKET_SLEEP_SECONDS", 600, 60)
-
-def get_direct_action(r):
-    if r.get("Is_Dilution"):
-        return "🔴 تجنب (🚨 خطر تخفيف)"
-    if r.get("Change_%", 0.0) > 100.0:
-        return "🔴 تجنب (🚨 صعود فجوة تضخم)"
-    score = r.get("Conviction_Score", 0)
-    if score >= 90:
-        return "🚀 شراء مؤكد (انفجار شديد القوة)"
-    elif score >= 80:
-        return "🔥 شراء قوي (زخم متسارع)"
-    elif score >= 70:
-        return "📈 شراء للمتابعة (قيد التكوين)"
-    return "⏳ مراقبة وتأكيد"
     
     # Initialize async loop inside this daemon thread
     loop = asyncio.new_event_loop()
