@@ -275,16 +275,70 @@ class QuantIntelligence:
         final_score = max(0, min(100, score))
         return final_score, details, price, price_change, rvol
 
-    def calculate_dynamic_target(self, score, ml_prob=0.0):
+    def calculate_dynamic_target(self, score, ml_prob=0.0, quote=None):
         """
-        Return a continuous target between +8% and +55%.
+        Return a continuous target between +8% and +120% depending on Low-Float status.
         It blends rules-based conviction with model/anomaly probability.
         """
         conviction = np.clip(float(score), 0.0, 100.0) / 100.0
-        probability = np.clip(float(ml_prob), 0.0, 100.0) / 100.0
+        probability = np.clip(float(ml_prob or 0.0), 0.0, 100.0) / 100.0
         blended_edge = (0.70 * conviction) + (0.30 * probability)
-        target = 8.0 + (42.0 * (blended_edge ** 1.7))
-        return round(float(np.clip(target, 8.0, 55.0)), 1)
+        base_target = 8.0 + (42.0 * (blended_edge ** 1.7))
+        
+        # Check for Ultra-Low Float boost (Super-Nova Setup)
+        float_shares = 15000000.0
+        if isinstance(quote, dict):
+            float_shares = self._safe_float(
+                quote.get("float_shares_outstanding") or quote.get("floatShares"),
+                15000000.0
+            )
+            
+        if float_shares < 2000000.0:  # Float less than 2 million shares
+            target = base_target * 2.4
+            return round(float(np.clip(target, 15.0, 120.0)), 1)
+        elif float_shares < 5000000.0:  # Float less than 5 million shares
+            target = base_target * 1.6
+            return round(float(np.clip(target, 12.0, 75.0)), 1)
+            
+        return round(float(np.clip(base_target, 8.0, 50.0)), 1)
+
+    def get_execution_directive(self, quote, score, ml_prob, session, sec_sentiment, is_halted=False):
+        """
+        Provide a customized, clear execution directive in Arabic based on conviction level and float.
+        """
+        float_shares = self._safe_float(
+            quote.get("float_shares_outstanding") or quote.get("floatShares") if quote else None,
+            15000000.0
+        )
+        
+        # 1. Halts execution
+        if is_halted:
+            return "⏳ أمر دخول محدد (Limit Order) قريباً من السعر المقترح عند استئناف التداول لتجنب الانزلاق السعري الفجائي."
+            
+        # 2. Super-Nova Execution (Low-Float + High Conviction)
+        if float_shares < 2000000.0 and score >= 80:
+            return "🚀 دخول فوري ماركت بسعر السوق (شديد القوة) - تأكيد سيولة متفجرة مع فلوت صغير جداً يدعم انفجاراً خارقاً (+100%)."
+            
+        # 3. Regular Breakout Execution
+        if score >= 80:
+            return "🔥 دخول ماركت (بسعر السوق الحالي) أو انتظار تراجع طفيف بنسبة 1-2% للدخول مع شمعة تأكيد الاتجاه."
+            
+        # 4. Silent Accumulation / Cautious Entry
+        if score >= 70:
+            return "📈 شراء تدريجي بأمر محدد السعر (Limit) - السهم في مرحلة تجميع سيولة هادئة ولم يبدأ انفجاره الرئيسي بعد."
+            
+        return "⏳ مراقبة وتأكيد - لا ينصح بالدخول الفوري لعدم اكتمال شروط تسارع السيولة."
+
+    def get_exit_strategy(self, target_pct):
+        """
+        Generate exits guidance based on the size of target_pct.
+        """
+        if target_pct >= 80.0:
+            return "🎯 استراتيجية التأمين: بع 40% من الكمية عند تحقيق +30% لتأمين الأرباح، و40% عند تحقيق +60%، واترك 20% حرة للوصول إلى القمة النهائية (+100% إلى +120%)."
+        elif target_pct >= 50.0:
+            return "🎯 استراتيجية التأمين: بع 50% من الكمية عند تحقيق +25% لتأمين رأس المال، واترك الباقي ليصل إلى الهدف المستهدف (+50% إلى +75%)."
+        else:
+            return f"🎯 استراتيجية التأمين: ضع أمر بيع محدد (Take Profit) لكامل الكمية عند السعر المستهدف (+{target_pct}%)."
 
     def calculate_dynamic_stop_loss(self, rvol, max_loss=5.0):
         """

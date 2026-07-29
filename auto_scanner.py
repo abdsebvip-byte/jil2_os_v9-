@@ -217,13 +217,18 @@ def start_scheduler():
                                 continue
                                 
                             # Determine dynamic target percentage
-                            target_pct = intel.calculate_dynamic_target(score, 70.0)
+                            target_pct = intel.calculate_dynamic_target(score, 70.0, quote=price_data)
                             
-                            action_lbl = get_direct_action({
-                                "Is_Dilution": is_dilution,
-                                "Change_%": change,
-                                "Conviction_Score": score
-                            })
+                            action_lbl = intel.get_execution_directive(
+                                quote=price_data,
+                                score=score,
+                                ml_prob=70.0,
+                                session=session,
+                                sec_sentiment=sec_sentiment,
+                                is_halted=True
+                            )
+                            
+                            exit_strategy = intel.get_exit_strategy(target_pct)
                             
                             notes = ""
                             if sec_sentiment["insider_buy"]:
@@ -242,7 +247,8 @@ def start_scheduler():
                                 f"🔥 *نقاط تطابق الخوارزمية:* `{score}%`"
                                 f"{notes}\n\n"
                                 f"🎯 *الهدف المقترح ديناميكياً:* `+{target_pct}%` (سعر: `${price * (1 + target_pct/100.0):.2f}`)\n"
-                                f"🛡️ *وقف الخسارة الصارم:* `-5%` (سعر: `${price * 0.95:.2f}`)\n\n"
+                                f"🛡️ *وقف الخسارة الصارم:* `-5%` (سعر: `${price * 0.95:.2f}`)\n"
+                                f"💰 *استراتيجية التداول:* {exit_strategy}\n\n"
                                 f"⚠️ *توجيه:* يرجى تفعيل الشراء بسعر محدد (Limit Order) قريباً من سعر الدخول لتجنب الانزلاق السعري عند فتح التداول."
                             )
                             
@@ -413,14 +419,19 @@ def start_scheduler():
                             elif is_reddit:
                                 notes += "\n💬 *الشهرة والبحث:* نقاش متداول في منتدى ريديت!"
                                 
-                            action_lbl = get_direct_action({
-                                "Is_Dilution": sec_sentiment["dilution_warning"],
-                                "Change_%": change,
-                                "Conviction_Score": score
-                            })
-                                
-                            target_pct = intel.calculate_dynamic_target(score, anomaly_info["confidence_score"] * 10.0)
+                            target_pct = intel.calculate_dynamic_target(score, anomaly_info["confidence_score"] * 10.0, quote=quote)
                             
+                            action_lbl = intel.get_execution_directive(
+                                quote=quote,
+                                score=score,
+                                ml_prob=anomaly_info["confidence_score"] * 10.0,
+                                session=session,
+                                sec_sentiment=sec_sentiment,
+                                is_halted=False
+                            )
+                            
+                            exit_strategy = intel.get_exit_strategy(target_pct)
+                                
                             alert_msg = (
                                 f"🎯 *فرصة انفجار سعري مكتشفة!*\n\n"
                                 f"🏢 *رمز السهم:* `{sym}`\n"
@@ -432,7 +443,8 @@ def start_scheduler():
                                 f"⭐ *مؤشر ثقة السيولة (ML):* `{anomaly_info['confidence_score']}/10`"
                                 f"{notes}\n\n"
                                 f"🎯 *الهدف المقترح ديناميكياً:* `+{target_pct}%` (سعر: `${price * (1 + target_pct/100.0):.2f}`)\n"
-                                f"🛡️ *وقف الخسارة الصارم:* `-5%` (سعر: `${price * 0.95:.2f}`)\n\n"
+                                f"🛡️ *وقف الخسارة الصارم:* `-5%` (سعر: `${price * 0.95:.2f}`)\n"
+                                f"💰 *استراتيجية التداول:* {exit_strategy}\n\n"
                                 f"⚠️ *ملاحظة:* هذه محاكاة تداول حية للحفاظ على رأس مالك."
                             )
                             
