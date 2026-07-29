@@ -324,6 +324,11 @@ def initialize_background_auto_scanner():
 
 auto_status = initialize_background_auto_scanner()
 
+def format_ml_prob(val):
+    if val is None or val == 0.0 or pd.isna(val):
+        return "⚠️ غير نشط"
+    return f"🔮 {val:.1f}%"
+
 # تفعيل خادم البوت التفاعلي مع الفحص الذاتي للخيوط
 def initialize_interactive_bot():
     import threading
@@ -544,22 +549,28 @@ with t_halts:
             # Optimize: ONLY query SEC filings news if ML probability is promising (>= 60.0%) to prevent freezes
             is_dilution = False
             sec_tags = "لا يوجد"
-            if ml_prob >= 60.0:
+            ml_prob_val = ml_prob if ml_prob is not None else 0.0
+            
+            if ml_prob_val >= 60.0:
                 sec_sentiment = get_sec_filings_sentiment(sym)
                 is_dilution = sec_sentiment["dilution_warning"]
                 sec_tags = ", ".join(sec_sentiment["details"]) if sec_sentiment["details"] else "لا يوجد"
                 
             if is_dilution:
                 decision = "🔴 تجنب (🚨 تخفيف S-1)"
-            elif ml_prob >= 65.0:
+            elif ml_prob is None:
+                decision = "⏳ قيد المعايرة (التعلم الآلي غير نشط)"
+            elif ml_prob_val >= 65.0:
                 decision = "🟢 شراء عاجل"
             else:
                 decision = "🔴 تجنب (مخاطرة عالية/ضعف السيولة)"
                 
+            ml_prob_str = f"🔮 {ml_prob:.1f}%" if ml_prob is not None else "⚠️ نموذج غير نشط"
+            
             halts_data.append({
                 "رمز السهم": sym,
                 "سبب الإيقاف": f"LULD ({reason})",
-                "احتمالية الانفجار": f"🔮 {ml_prob:.1f}%",
+                "احتمالية الانفجار": ml_prob_str,
                 "التوجيه المباشر": decision,
                 "نقطة الدخول المقترحة": entry_str,
                 "الهدف الربحي المقترح": target_str,
@@ -775,6 +786,8 @@ def run_session_pipeline(session_name):
             
             df_opportunities = pd.DataFrame(opportunities)
             if not df_opportunities.empty:
+                # تعبئة القيم الفارغة بنسبة 0.0 لتجنب أخطاء المقارنة
+                df_opportunities["ML_Probability"] = df_opportunities["ML_Probability"].fillna(0.0)
                 # ترتيب الفرص حسب قوة الاختراق واحتمالية خوارزمية التعلم الآلي لضمان الأقوى في القمة
                 df_opportunities = df_opportunities.sort_values(by=["Conviction_Score", "ML_Probability"], ascending=[False, False])
                 
@@ -922,7 +935,7 @@ def run_session_pipeline(session_name):
                     df_exp_display["مسار الانفجار"] = df_exp_display.apply(get_track_type, axis=1)
                     df_exp_display["التوجيه المباشر"] = df_exp_display.apply(get_direct_action, axis=1)
                     df_exp_display["تطابق الخوارزمية"] = df_exp_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%")
-                    df_exp_display["احتمالية الانفجار (ML)"] = df_exp_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
+                    df_exp_display["احتمالية الانفجار (ML)"] = df_exp_display["ML_Probability"].apply(format_ml_prob)
                     df_exp_display["الأسهم الحرة"] = df_exp_display["Float_M"].apply(lambda x: f"{x:.1f}M")
                     df_exp_display["نسبة الشورت"] = df_exp_display["Short_Pct"].apply(lambda x: f"{x:.1f}%")
                     df_exp_display["حالة الإيقاف"] = df_exp_display.apply(lambda r: f"🚨 موقوف ({r['Halt_Reason']})" if r["Is_Halted"] else "🟢 نشط", axis=1)
@@ -947,7 +960,7 @@ def run_session_pipeline(session_name):
                     df_scalp_display = df_scalp.copy()
                     df_scalp_display["التوجيه المباشر"] = df_scalp_display.apply(get_direct_action, axis=1)
                     df_scalp_display["تطابق الخوارزمية"] = df_scalp_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%" if x >= 80 else f"⚡ {x}%")
-                    df_scalp_display["احتمالية الانفجار (ML)"] = df_scalp_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
+                    df_scalp_display["احتمالية الانفجار (ML)"] = df_scalp_display["ML_Probability"].apply(format_ml_prob)
                     df_scalp_display["الأسهم الحرة"] = df_scalp_display["Float_M"].apply(lambda x: f"{x:.1f}M")
                     df_scalp_display["حالة الإيقاف"] = df_scalp_display.apply(lambda r: f"🚨 موقوف ({r['Halt_Reason']})" if r["Is_Halted"] else "🟢 نشط", axis=1)
                     df_scalp_display["تحذير التخفيف"] = df_scalp_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
@@ -974,7 +987,7 @@ def run_session_pipeline(session_name):
                         df_ov_display = df_overnight.copy()
                         df_ov_display["التوجيه المباشر"] = df_ov_display.apply(get_direct_action, axis=1)
                         df_ov_display["تطابق الخوارزمية"] = df_ov_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%")
-                        df_ov_display["احتمالية الانفجار (ML)"] = df_ov_display["ML_Probability"].apply(lambda x: f"🔮 {x:.1f}%")
+                        df_ov_display["احتمالية الانفجار (ML)"] = df_ov_display["ML_Probability"].apply(format_ml_prob)
                         df_ov_display["الأسهم الحرة"] = df_ov_display["Float_M"].apply(lambda x: f"{x:.1f}M")
                         
                         df_ov_table = df_ov_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "SEC_Tags", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "Popularity", "Action_Directive"]].copy()

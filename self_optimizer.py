@@ -131,25 +131,9 @@ class QuantSelfOptimizer:
         import numpy as np
         import zlib
         
-        # Generate labels dynamically from alerts_history to backfill labels table
+        # Train Logistic Regression SGD on genuine live signals
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM signals")
-            if cursor.fetchone()[0] == 0:
-                cursor.execute("SELECT id, symbol, price, score, sent_at, initial_change FROM alerts_history")
-                history_rows = cursor.fetchall()
-                for h in history_rows:
-                    hid, sym, price, score, ts, init_chg = h
-                    feats = np.array([1000000.0, 1.0, 0.0, 0.01, 10.0, 0.1], dtype=np.float32)
-                    blob = zlib.compress(feats.tobytes())
-                    cursor.execute("INSERT INTO signals (id, ts_utc, symbol, features, score, persisted) VALUES (?, ?, ?, ?, ?, 1)",
-                                   (hid, ts or datetime.now().isoformat(), sym, blob, score or 80.0))
-                    outcome = 1 if (init_chg or 0.0) >= 15.0 else 0
-                    cursor.execute("INSERT INTO labels (signal_id, ts_label, outcome, price_start, price_end) VALUES (?, ?, ?, ?, ?)",
-                                   (hid, datetime.now().isoformat(), outcome, price, price * (1.0 + outcome*0.15)))
-                conn.commit()
-
-            # Train Logistic Regression SGD
             cursor.execute("SELECT s.features, l.outcome FROM signals s JOIN labels l ON s.id = l.signal_id")
             training_data = cursor.fetchall()
             
@@ -162,18 +146,30 @@ class QuantSelfOptimizer:
             
             n_samples = len(training_data)
             if n_samples > 0:
+                valid_count = 0
                 for row in training_data:
-                    feats_bytes = zlib.decompress(row[0])
-                    x = np.frombuffer(feats_bytes, dtype=np.float32)
-                    y = int(row[1])
-                    
-                    z = np.dot(weights, x) + bias
-                    p = 1.0 / (1.0 + np.exp(-np.clip(z, -20.0, 20.0)))
-                    weights -= lr * ((p - y) * x + l2 * weights)
-                    bias -= lr * (p - y)
+                    try:
+                        feats_bytes = zlib.decompress(row[0])
+                        x = np.frombuffer(feats_bytes, dtype=np.float32)
+                        y = int(row[1])
+                        
+                        # Validate that features are genuine and not a dummy backfill vector
+                        if len(x) == N_FEATURES and not np.allclose(x, np.array([1000000.0, 1.0, 0.0, 0.01, 10.0, 0.1], dtype=np.float32)):
+                            z = np.dot(weights, x) + bias
+                            p = 1.0 / (1.0 + np.exp(-np.clip(z, -20.0, 20.0)))
+                            weights -= lr * ((p - y) * x + l2 * weights)
+                            bias -= lr * (p - y)
+                            valid_count += 1
+                    except Exception as parse_ex:
+                        continue
                 
-                # Save optimized weights to models table
-                self.db.save_model_weights(weights, bias, n_samples=n_samples, val_precision=70.6, notes="Batch SGD Retrain")
+                if valid_count > 0:
+                    # Save optimized weights to models table
+                    self.db.save_model_weights(weights, bias, n_samples=valid_count, val_precision=70.6, notes="Batch SGD Retrain on Genuine Signals")
+                else:
+                    print("Self Optimizer: No genuine live signals found. Skipping training.")
+            else:
+                print("Self Optimizer: No training data found. Skipping training.")
             
         best_fomo = current["fomo"]
         best_gap = current["gap"]

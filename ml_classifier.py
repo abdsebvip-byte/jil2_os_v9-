@@ -86,8 +86,8 @@ class QuantMLClassifier:
         tickers = Ticker(train_symbols)
         df = tickers.history(period="6mo")
         if df is None or df.empty:
-            print("QuantMLClassifier Error: Could not fetch training data. Using default dummy model.")
-            self.model = self._create_fallback_model()
+            print("QuantMLClassifier Error: Could not fetch training data. Keeping model as None.")
+            self.model = None
             return
             
         df = df.reset_index()
@@ -176,23 +176,13 @@ class QuantMLClassifier:
         except Exception as e:
             print(f"QuantMLClassifier Warning: Could not save model to disk: {e}")
 
-    def _create_fallback_model(self):
-        """
-        Create a dummy model in case training fails.
-        """
-        from sklearn.dummy import DummyClassifier
-        dummy = DummyClassifier(strategy="stratified", random_state=42)
-        X = np.random.rand(100, 8)
-        y = np.random.randint(0, 2, 100)
-        dummy.fit(X, y)
-        return dummy
-
     def predict_probability(self, price, change, rvol, volatility_10d, prev_rvol, prev_change, float_shares_m, short_percent):
         """
         Predict the calibrated probability of a breakout succeeding (0.0 to 100.0) using XGBoost.
+        Returns None if no real model is active.
         """
         if self.model is None:
-            return 50.0
+            return None
             
         try:
             features = np.array([[
@@ -209,4 +199,4 @@ class QuantMLClassifier:
             class_1_prob = float(probs[1]) * 100.0
             return round(class_1_prob, 1)
         except Exception as e:
-            return 50.0
+            return None
