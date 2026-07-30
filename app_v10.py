@@ -1070,7 +1070,8 @@ with t5:
             with col1:
                 trade_type = st.selectbox("نوع العملية", ["شراء (BUY)", "بيع (SELL)"])
             with col2:
-                trade_symbol = st.text_input("رمز السهم", placeholder="مثال: GWAV").upper().strip()
+                _trade_input = st.text_input("رمز السهم", placeholder="مثال: GWAV")
+                trade_symbol = str(_trade_input).upper().strip() if _trade_input else ""
             with col3:
                 trade_qty = st.number_input("الكمية", min_value=1, value=10, step=1)
             with col4:

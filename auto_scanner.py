@@ -154,11 +154,11 @@ def start_scheduler():
             
             session = scanner.get_current_market_session()
             
-            # If market is closed, sleep longer but check halts less frequently
+            # If market is closed (night), still scan for gap-up setups that will open next day
             if session == "NIGHT_CLOSED":
-                print(f"Background Scanner: Market is closed (Night). Sleeping for {closed_sleep_seconds} seconds...")
-                time.sleep(closed_sleep_seconds)
-                continue
+                print(f"Background Scanner: Market closed (Night). Running overnight gap-up setup scan...")
+                # Override session to PRE_MARKET logic so scanner still fetches and scores stocks
+                session = "PRE_MARKET"
                 
             # 1. Real-time Halts Monitor (Runs every 60 seconds)
             try:
@@ -338,8 +338,9 @@ def start_scheduler():
                             price = _safe_float(quote.get("postMarketPrice"), price)
                             change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else change
 
-                        # Price/change filters aligned with the explosive-stock mandate. (تم التوسيع لـ 100% للسماح بالانفجارات الفجائية الموثقة بالمحفزات)
-                        if price <= 0.0 or price > 20.0 or change < 5.0 or change > 100.0:
+                        # فلتر السعر والتغيير — تم توسيع النطاق لاكتشاف الانفجارات في جميع المراحل
+                        # السعر: 0.1 دولار إلى 50 دولار | التغيير: من 3% إلى غير محدود
+                        if price <= 0.0 or price > 50.0 or change < 3.0:
                             continue
 
                         # Check RVOL and Float before loading news to save API bandwidth
@@ -383,8 +384,10 @@ def start_scheduler():
                             quote, session, anomaly_info, sec_sentiment=sec_sentiment, is_trending=is_trending
                         )
 
-                        # Trigger alert if algorithm conviction is strong
-                        if score >= 80 and anomaly_info["confidence_score"] >= 5.0:
+                        # تفعيل التنبيه إذا كانت قناعة الخوارزمية كافية
+                        # تم خفض الحد من 80 إلى 65 لاكتشاف الفرص المبكرة
+                        # تم خفض anomaly confidence من 5.0 إلى 2.0 لتوسيع الرصد
+                        if score >= 65 and anomaly_info["confidence_score"] >= 2.0:
                             if db.check_alert_sent_recently(sym, hours=3):
                                 continue
 
