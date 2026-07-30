@@ -673,7 +673,7 @@ def run_session_pipeline(session_name):
                         price = _safe_float(quote.get("postMarketPrice"), price)
                         change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else change
 
-                    if price <= 0.0 or price > 20.0 or change < 3.0 or change > 100.0:
+                    if price <= 0.0 or price > 20.0 or change < 5.0 or change > 100.0:
                         continue
                         
                     # تصفية إضافية لمنع عرض الأسهم الخاملة التي لا تتداول في الجلسات الممتدة
@@ -785,7 +785,6 @@ def run_session_pipeline(session_name):
                         "Action_Directive": action_lbl
                     })
                 except Exception as e:
-                    continue
                     continue
             
             df_opportunities = pd.DataFrame(opportunities)
@@ -916,13 +915,31 @@ def run_session_pipeline(session_name):
                     catalyst_track = (df_opportunities["Float_M"] <= 5.0) & (df_opportunities["Has_Catalyst"] == True)
                     
                     rvol_req = 0.05 if session_name in ["PRE_MARKET", "AFTER_HOURS"] else 4.0
-                    df_explosive = df_opportunities[
+                    
+                    # المسار 1: أسهم ضغط الشورت (Short Squeeze)
+                    squeeze_cond = (
                         (df_opportunities["Conviction_Score"] >= 80) &
                         (df_opportunities["RVOL"] >= rvol_req) &
-                        (
-                            ((df_opportunities["ML_Probability"] >= 60.0) & squeeze_track) |
-                            ((df_opportunities["ML_Probability"] >= 50.0) & catalyst_track)
-                        )
+                        (df_opportunities["Float_M"] <= 15.0) &
+                        (df_opportunities["Short_Pct"] >= 10.0) &
+                        (df_opportunities["ML_Probability"] >= 60.0)
+                    )
+                    # المسار 2: أسهم المحفز الإيجابي مع فلوت منخفض جداً
+                    catalyst_cond = (
+                        (df_opportunities["Conviction_Score"] >= 80) &
+                        (df_opportunities["RVOL"] >= rvol_req) &
+                        (df_opportunities["Float_M"] <= 5.0) &
+                        (df_opportunities["Has_Catalyst"] == True) &
+                        (df_opportunities["ML_Probability"] >= 50.0)
+                    )
+                    # المسار 3: أسهم عالية القناعة بدون شرط الفلوت (شبكة أمان)
+                    high_conviction_cond = (
+                        (df_opportunities["Conviction_Score"] >= 85) &
+                        (df_opportunities["RVOL"] >= rvol_req) &
+                        (~df_opportunities["Is_Dilution"])
+                    )
+                    df_explosive = df_opportunities[
+                        squeeze_cond | catalyst_cond | high_conviction_cond
                     ].copy()
                 else:
                     df_explosive = pd.DataFrame()
