@@ -403,21 +403,31 @@ except Exception as kpi_err:
 
 # 2.1 إعداد شريط جانبي لأدوات التحكم والاختبار
 st.sidebar.markdown("### 🛠️ أدوات التحكم والربط")
-st.sidebar.write("استخدم هذا الزر لإرسال تنبيه عينة والتأكد من نجاح اتصال بوت تيليجرام بجوالك في أي وقت:")
-if st.sidebar.button("📢 إرسال إشارة تجريبية لتيليجرام", key="sidebar_tg_test"):
+st.sidebar.write("استخدم هذا الزر للتأكد من نجاح اتصال بوت تيليجرام فقط — **الأرقام وهمية ولا علاقة لها بالسوق:**")
+if st.sidebar.button("🔧 اختبار اتصال تيليجرام فقط (أرقام وهمية)", key="sidebar_tg_test"):
     notifier = TelegramNotifier()
-    success = notifier.send_breakout_alert(
-        symbol="TEST",
-        price=12.45,
-        change=15.8,
-        rvol=3.5,
-        score=90,
-        confidence=8.5
+    import requests, os
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    test_msg = (
+        "🔧 *رسالة اختبار اتصال فقط — ليست توصية حقيقية*\n\n"
+        "✅ بوت تيليجرام متصل ويعمل بشكل صحيح.\n"
+        "⚠️ هذه الأرقام وهمية بالكامل ولا علاقة لها بأي سهم في السوق:\n"
+        "• رمز وهمي: `TEST-BOT`\n"
+        "• سعر وهمي: `$12.45`\n"
+        "• تغيير وهمي: `+15.8%`\n\n"
+        "📌 التنبيهات الحقيقية تأتي تلقائياً من محرك الفحص عند اكتشاف سهم فعلي."
     )
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        resp = requests.post(url, json={"chat_id": chat_id, "text": test_msg, "parse_mode": "Markdown"}, timeout=10)
+        success = resp.status_code == 200
+    except:
+        success = False
     if success:
-        st.sidebar.success("✅ تم إرسال رسالة الاختبار بنجاح!")
+        st.sidebar.success("✅ الاتصال يعمل! وصلتك رسالة توضح أنها اختبار فقط.")
     else:
-        st.sidebar.error("❌ فشل الإرسال، تحقق من الأسرار.")
+        st.sidebar.error("❌ فشل الإرسال، تحقق من config.env.")
 
 # 🧮 حاسبة حجم الصفقة وإدارة المخاطر (Position Sizing Calculator)
 st.sidebar.markdown("---")

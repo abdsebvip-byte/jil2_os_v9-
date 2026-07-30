@@ -26,9 +26,11 @@ def get_historical_features(symbols):
                 if sym in stats and isinstance(stats[sym], dict):
                     float_shares = float(stats[sym].get("floatShares") or 10000000.0)
                     short_percent = float(stats[sym].get("shortPercentOfFloat") or 0.0) * 100.0
+                    days_to_cover = float(stats[sym].get("shortRatio") or 0.0)
                     stats_data[sym] = {
                         "float_shares_m": float_shares / 1000000.0, # normalized in millions
-                        "short_percent": short_percent
+                        "short_percent": short_percent,
+                        "days_to_cover": days_to_cover
                     }
     except Exception as e:
         print(f"IntradayTracker Stats Warning: {e}")
@@ -90,7 +92,7 @@ def get_historical_features(symbols):
                     sq_score += 20
                 
                 # Fundamental features
-                f_data = stats_data.get(sym, {"float_shares_m": 10.0, "short_percent": 0.0})
+                f_data = stats_data.get(sym, {"float_shares_m": 10.0, "short_percent": 0.0, "days_to_cover": 0.0})
                 
                 feature_map[sym] = {
                     "volatility_10d": round(volatility_10d, 2),
@@ -98,6 +100,7 @@ def get_historical_features(symbols):
                     "prev_change": round(prev_change, 2),
                     "float_shares_m": round(f_data["float_shares_m"], 2),
                     "short_percent": round(f_data["short_percent"], 2),
+                    "days_to_cover": round(f_data.get("days_to_cover", 0.0), 2),
                     "squeeze_score": sq_score
                 }
             except Exception as e:
@@ -107,3 +110,48 @@ def get_historical_features(symbols):
     except Exception as e:
         print(f"IntradayTracker Error: {e}")
         return {}
+
+def get_market_trend():
+    """
+    Fetch SPY and QQQ real-time daily change percent from Yahoo Finance.
+    Returns a dictionary with details and a general status: "GREEN", "YELLOW", "RED".
+    """
+    try:
+        from yahooquery import Ticker
+        tickers = Ticker(["SPY", "QQQ"])
+        price_data = tickers.price
+        
+        spy_chg = 0.0
+        qqq_chg = 0.0
+        
+        if "SPY" in price_data and isinstance(price_data["SPY"], dict):
+            spy_chg = float(price_data["SPY"].get("regularMarketChangePercent") or 0.0) * 100.0 if float(price_data["SPY"].get("regularMarketChangePercent") or 0.0) < 0.1 else float(price_data["SPY"].get("regularMarketChangePercent") or 0.0)
+            # yahooquery changes can be decimal or percentage format
+            if abs(spy_chg) < 0.1 and float(price_data["SPY"].get("regularMarketChangePercent") or 0.0) != 0.0:
+                spy_chg = float(price_data["SPY"].get("regularMarketChangePercent") or 0.0) * 100.0
+        if "QQQ" in price_data and isinstance(price_data["QQQ"], dict):
+            qqq_chg = float(price_data["QQQ"].get("regularMarketChangePercent") or 0.0)
+            if abs(qqq_chg) < 0.1 and qqq_chg != 0.0:
+                qqq_chg = qqq_chg * 100.0
+            
+        # Determine trend
+        min_chg = min(spy_chg, qqq_chg)
+        if min_chg <= -1.0:
+            status = "RED" # Panic / Bearish
+        elif min_chg <= -0.2:
+            status = "YELLOW" # Caution / Side
+        else:
+            status = "GREEN" # Bullish / Stable
+            
+        return {
+            "status": status,
+            "spy_change": round(spy_chg, 2),
+            "qqq_change": round(qqq_chg, 2)
+        }
+    except Exception as e:
+        print(f"IntradayTracker Market Trend Error: {e}")
+        return {
+            "status": "GREEN", # Default to green on failure to avoid blocking
+            "spy_change": 0.0,
+            "qqq_change": 0.0
+        }

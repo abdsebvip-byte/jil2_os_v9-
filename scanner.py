@@ -74,7 +74,9 @@ class FreeMarketScanner:
                 "premarket_close",
                 "premarket_change",
                 "postmarket_close",
-                "postmarket_change"
+                "postmarket_change",
+                "short_percent_of_float",
+                "short_ratio"
             ],
             "sort": {"sortBy": "change", "sortOrder": "desc"},
             "range": [0, 100]
@@ -122,7 +124,9 @@ class FreeMarketScanner:
                             "askSize": 100.0,
                             "vwap": float(d[7] or 0.0),
                             "value_traded": float(d[8] or 0.0),
-                            "float_shares_outstanding": float(d[5] or 10000000.0)
+                            "float_shares_outstanding": float(d[5] or 10000000.0),
+                            "short_percent": float(d[13] or 0.0) if len(d) > 13 and d[13] is not None else 0.0,
+                            "days_to_cover": float(d[14] or 0.0) if len(d) > 14 and d[14] is not None else 0.0
                         })
                 
                 self.cached_quotes = quotes
@@ -185,7 +189,9 @@ class FreeMarketScanner:
                 "askSize": q.get("askSize", 0.0),
                 "vwap": q.get("vwap", 0.0),
                 "value_traded": q.get("value_traded", 0.0),
-                "float_shares_outstanding": q.get("float_shares_outstanding")
+                "float_shares_outstanding": q.get("float_shares_outstanding"),
+                "short_percent": q.get("short_percent", 0.0),
+                "days_to_cover": q.get("days_to_cover", 0.0)
             })
         await asyncio.sleep(0.02)
         return formatted_quotes
