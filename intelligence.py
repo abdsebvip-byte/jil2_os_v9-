@@ -182,18 +182,27 @@ class QuantIntelligence:
         price, price_change, prev_close = self._session_price_change(quote, session)
         open_price = self._safe_float(quote.get("regularMarketOpen"), price)
 
+        # فلتر السعر — الجلسات الممتدة تقبل حتى $50
+        is_extended = session in ["PRE_MARKET", "AFTER_HOURS", "NIGHT_CLOSED"]
         if 0.0 < price <= 20.0:
             score += 15
             details["Price_Filter"] = True
+        elif is_extended and 20.0 < price <= 50.0:
+            score += 8  # نقاط جزئية للأسهم المتوسطة في الجلسات الممتدة
+            details["Price_Filter"] = "EXTENDED_RANGE"
         else:
             details["Price_Filter"] = False
 
         # Catalyst-Adjusted Gap and Fomo Limits
         gap_limit = thresholds["gap"]
         fomo_limit = thresholds["fomo"]
+        # في الجلسات الممتدة، الارتفاعات الكبيرة طبيعية — لا نعاقبها
+        if is_extended:
+            fomo_limit = 300.0  # لا حد للارتفاع في الجلسات الممتدة
+            gap_limit = 100.0
         if isinstance(sec_sentiment, dict) and (sec_sentiment.get("insider_buy") or sec_sentiment.get("material_news")):
-            gap_limit = 75.0
-            fomo_limit = 100.0
+            gap_limit = max(gap_limit, 75.0)
+            fomo_limit = max(fomo_limit, 100.0)
 
         gap = ((open_price - prev_close) / prev_close) * 100.0 if prev_close > 0 else 0.0
         if abs(gap) <= gap_limit:
@@ -205,9 +214,13 @@ class QuantIntelligence:
         if 5.0 <= price_change <= 15.0:
             score += 20
             details["Early_Breakout"] = "IDEAL"
-        elif 15.0 < price_change <= fomo_limit:
+        elif 15.0 < price_change <= 55.0:
             score += 10
             details["Early_Breakout"] = "HIGH"
+        elif 55.0 < price_change <= fomo_limit:
+            # في الجلسات الممتدة: ارتفاع قوي يعني محفز حقيقي
+            score += 5 if is_extended else -10
+            details["Early_Breakout"] = "STRONG_EXTENDED" if is_extended else "FOMO_BLOCKED"
         elif price_change > fomo_limit:
             score -= 10
             details["Early_Breakout"] = "FOMO_BLOCKED"
