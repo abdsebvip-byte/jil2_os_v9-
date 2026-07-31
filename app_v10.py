@@ -708,387 +708,140 @@ def get_direct_action(r):
 
 
 def run_session_pipeline(session_name):
-    st.markdown(f"🔬 **حالة المعالجة الحالية:** جاري مسح وتصفية سيولة جلسة `{session_name}`...")
-    
-    with st.spinner("جاري استخلاص البيانات وتدريب نموذج Isolation Forest ورصد شذوذ الحركة الحجمية..."):
-        symbols = scanner.fetch_all_us_symbols()
-        if symbols:
-            # 1. جلب مؤشرات التعلم الآلي التاريخية ونموذج التنبؤ
-            from intraday_tracker import get_historical_features
-            from ml_classifier import QuantMLClassifier
-            
-            hist_features = get_historical_features(symbols)
-            ml_classifier = QuantMLClassifier()
-            
-            # جلب قائمة الأسهم الأكثر شعبية وبحثاً من ياهو وريديت (رادار الشهرة)
-            retail_trending = scanner.fetch_retail_trending_symbols()
-            yahoo_trending = retail_trending["yahoo"]
-            reddit_trending = retail_trending["reddit"]
-            
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            raw_data = loop.run_until_complete(scanner.scan_entire_market())
-            
-            if not raw_data:
-                st.warning("⚠️ لم يتم استلام أي بيانات أسعار حالياً من ياهو فاينانس.")
-                return
-            
-            # 2. تشغيل Isolation Forest لرصد الشذوذ
-            anomaly_map = intel.fit_anomaly_detector(raw_data, session_name)
-            
-            # 3. جلب حالة الإيقاف المؤقت لجميع الأسهم دفعة واحدة
-            active_halts = get_active_halts()
-            
-            # تصفية وفرز البيانات
-            from decision_engine import DecisionEngine
-            engine = DecisionEngine()
-            
-            opportunities = []
-            for quote in raw_data:
-                try:
-                    sym = quote.get("symbol")
-                    if not sym:
-                        continue
-                        
-                    # Fetch news catalyst (SEC Form 4 or 8-K)
-                    sec_sentiment = get_sec_filings_sentiment(sym)
-                    has_catalyst = bool(sec_sentiment.get("insider_buy") or sec_sentiment.get("material_news"))
-                    
-                    anomaly_info = anomaly_map.get(sym, {"is_anomaly": False, "confidence_score": 1.0})
-                    
-                    is_yahoo = sym in yahoo_trending
-                    is_reddit = sym in reddit_trending
-                    is_trending = is_yahoo or is_reddit
-                    
-                    f_info = hist_features.get(sym, {
-                        "volatility_10d": 5.0, 
-                        "prev_rvol": 1.0, 
-                        "prev_change": 0.0,
-                        "float_shares_m": 10.0,
-                        "short_percent": 0.0,
-                        "squeeze_score": 0
-                    })
-                    
-                    # 1. تقييم السهم عبر محرك القرار المركزي
-                    trace = engine.evaluate_symbol(
-                        quote=quote,
-                        session=session_name,
-                        anomaly_info=anomaly_info,
-                        sec_sentiment=sec_sentiment,
-                        is_trending=is_trending,
-                        f_info=f_info
-                    )
-                    
-                    # 2. تسجيل القرار كاملاً في قاعدة البيانات لضمان الشفافية
-                    from database import QuantDatabase
-                    db_trace = QuantDatabase()
-                    db_trace.log_evaluation_trace(
-                        symbol=sym,
-                        price=trace["price"],
-                        change=trace["change"],
-                        rvol=trace["rvol"],
-                        score=trace["score"],
-                        ml_prob=trace["ml_prob"],
-                        status=trace["status"],
-                        reason=trace["rejection_reason"],
-                        details=trace["details"]
-                    )
-                    
-                    # 3. عرض الأسهم المقبولة فقط في الجداول الرئيسية
-                    if trace["status"] != "ACCEPTED":
-                        continue
-                        
-                    price = trace["price"]
-                    change = trace["change"]
-                    rvol = trace["rvol"]
-                    score = trace["score"]
-                    ml_prob = trace["ml_prob"]
-                    
-                    # التحقق من حالة الإيقاف
-                    is_halted = sym in active_halts
-                    halt_reason = active_halts[sym] if is_halted else ""
-                    
-                    sec_tags = ", ".join(sec_sentiment["details"]) if sec_sentiment["details"] else "لا يوجد"
-                    is_dilution = sec_sentiment["dilution_warning"]
-                    
-                    # تحديد نصوص الشهرة والبحث والتوجيه
-                    popularity_lbl = "➖ طبيعي"
-                    if is_yahoo and is_reddit:
-                        popularity_lbl = "🔥 شهرة عالية جداً (بحث ونقاش مكثف)"
-                    elif is_yahoo:
-                        popularity_lbl = "📈 بحث نشط (ياهو فاينانس)"
-                    elif is_reddit:
-                        popularity_lbl = "💬 نقاشات متداولة (ريديت)"
-                        
-                    action_lbl = get_direct_action({
-                        "Is_Dilution": is_dilution,
-                        "Change_%": change,
-                        "Conviction_Score": score
-                    })
-                    
-                    opportunities.append({
-                        "Symbol": sym,
-                        "Price": price,
-                        "Change_%": change,
-                        "Volume": float(quote.get("regularMarketVolume", 0.0)),
-                        "RVOL": rvol,
-                        "Conviction_Score": score,
-                        "Is_Anomaly": anomaly_info["is_anomaly"],
-                        "Confidence_Score": anomaly_info["confidence_score"],
-                        "ML_Probability": ml_prob,
-                        "Is_Trending": is_trending,
-                        "Is_Halted": is_halted,
-                        "Halt_Reason": halt_reason,
-                        "SEC_Tags": sec_tags,
-                        "Is_Dilution": is_dilution,
-                        "Float_M": f_info["float_shares_m"],
-                        "Short_Pct": f_info["short_percent"],
-                        "Days_To_Cover": f_info.get("days_to_cover", 0.0),
-                        "Squeeze_Score": f_info.get("squeeze_score", 0),
-                        "Has_Catalyst": has_catalyst,
-                        "Matches": trace["details"],
-                        "Popularity": popularity_lbl,
-                        "Action_Directive": action_lbl
-                    })
-                except Exception as e:
-                    continue
-            
-            df_opportunities = pd.DataFrame(opportunities)
-            if not df_opportunities.empty:
-                # تعبئة القيم الفارغة بنسبة 0.0 لتجنب أخطاء المقارنة
-                df_opportunities["ML_Probability"] = df_opportunities["ML_Probability"].fillna(0.0)
-                # ترتيب الفرص حسب قوة الاختراق واحتمالية خوارزمية التعلم الآلي لضمان الأقوى في القمة
-                df_opportunities = df_opportunities.sort_values(by=["Conviction_Score", "ML_Probability"], ascending=[False, False])
-                
-                # --- القسم الأول المخصص لرصد شذوذ الحجم (Isolation Forest) ---
-                st.markdown("""
-                <div class="ai-section">
-                    <h3 style="color:#3b82f6;margin:0 0 10px 0;font-size:20px;">🔍 محرك رصد الشذوذ الحجمي (Machine Learning Anomaly Detection)</h3>
-                    <p style="color:#94a3b8;font-size:14px;margin-bottom:15px;">
-                        خوارزمية <b>Isolation Forest</b> تقوم بفصل وتصنيف الرموز التي تشهد انحرافاً حاداً في الحجم النسبي (RVOL) والتدفقات النقدية اللحظية بنسبة 5% كحد أقصى لاستبعاد الضجيج.
-                    </p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # استخلاص الأسهم الشاذة حجمياً فقط
-                df_anomalies = df_opportunities[df_opportunities["Is_Anomaly"] == True].copy()
-                
-                c_anom1, c_anom2 = st.columns(2)
-                with c_anom1:
-                    st.metric(label="الأسهم الخاضعة للفحص الكلي", value=f"{len(raw_data)} شركة")
-                with c_anom2:
-                    st.metric(label="الانفجارات الحجمية المكتشفة بالـ ML", value=f"{len(df_anomalies)} أسهم شاذة", delta=f"{((len(df_anomalies)/len(raw_data))*100):.1f}% من السوق", delta_color="inverse")
-                
-                if not df_anomalies.empty:
-                    st.write("📈 **قائمة الأسهم التي تشهد شذوذاً حجمياً استثنائياً حالياً:**")
-                    df_anom_display = df_anomalies[["Symbol", "Price", "Change_%", "Volume", "RVOL", "Confidence_Score"]].copy()
-                    df_anom_display.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "مؤشر ثقة الاختراق (0-10)"]
-                    st.markdown(render_premium_table(df_anom_display), unsafe_allow_html=True)
-                else:
-                    st.info("ℹ️ لم يتم العثور على شذوذ حجمي غير طبيعي في فلاتر الأسعار تحت 20$ حالياً.")
-                
-                # --- القسم الثاني: التوجيه التنفيذي والطبقات السبعة ---
-                top_stock = df_opportunities.iloc[0]
-                matches = top_stock["Matches"]
-                
-                target_pct_card = intel.calculate_dynamic_target(top_stock['Conviction_Score'], top_stock['Confidence_Score'] * 10.0)
-                st.markdown(f"""
-                <div class="signal-card">
-                    <h2 style='color:#10b981; margin:0 0 10px 0; font-size:22px; font-weight:700;'>🎯 التوجيه التنفيذي للمركز الأول (أقوى تطابق كمي)</h2>
-                    <h3>🔥 رمز السهم: {top_stock['Symbol']} | نسبة تطابق الخوارزمية: {top_stock['Conviction_Score']}%</h3>
-                    <p style='font-size:18px;margin:5px 0;'>السعر الحالي: <b>{top_stock['Price']:.4f} $</b> | التغير اليومي: <b>{top_stock['Change_%']:+.2f}%</b> | تسارع الحجم النسبي: <b>{top_stock['RVOL']:.2f}x</b></p>
-                    <p style='font-size:15px; color:#3b82f6;margin:0 0 10px 0;'><b>مؤشر الثقة الميكروي: {top_stock['Confidence_Score']}/10 وفق خوارزمية الغابة المعزولة (Isolation Forest)</b></p>
-                    <h3 style="color:#00FFCC !important; margin: 5px 0;">🎯 القرار المقترح: {get_direct_action(top_stock)}</h3>
-                    <p style='font-size:16px; margin:5px 0; color:#FFA500;'>💰 <b>الهدف المقترح:</b> +{target_pct_card}% (سعر: ${top_stock['Price'] * (1 + target_pct_card/100.0):.2f}) | 🛡️ <b>وقف الخسارة:</b> -5% (سعر: ${top_stock['Price'] * 0.95:.2f})</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # زر إرسال التنبيه الفوري للتيليجرام
-                notifier = TelegramNotifier()
-                if st.button("📢 إرسال إشارة التنبيه للتيليجرام", key="send_tg_alert"):
-                    target_pct = intel.calculate_dynamic_target(top_stock['Conviction_Score'], top_stock['Confidence_Score'] * 10.0)
-                    
-                    # Fetch SEC details
-                    sec_sentiment = get_sec_filings_sentiment(top_stock['Symbol'])
-                    notes = ""
-                    if sec_sentiment.get("insider_buy"):
-                        notes += "\n⭐ *تنبيه المطلعين:* تم رصد شراء مسؤولين لأسهمهم (Form 4)!"
-                    if sec_sentiment.get("material_news"):
-                        notes += "\n📝 *حدث جوهري:* تم رصد أخبار أو شراكة جديدة (Form 8-K)!"
-                        
-                    alert_msg = (
-                        f"🎯 *فرصة انفجار سعري مكتشفة (طلب يدوي)!*\n\n"
-                        f"🏢 *رمز السهم:* `{top_stock['Symbol']}`\n"
-                        f"💵 *السعر الحالي:* `${top_stock['Price']:.4f}`\n"
-                        f"📈 *التغير اليومي:* `+{top_stock['Change_%']:.2f}%`\n"
-                        f"🔊 *الحجم النسبي RVOL:* `{top_stock['RVOL']:.2f}x`\n\n"
-                        f"🔥 *نسبة تطابق الخوارزمية:* `{top_stock['Conviction_Score']}%`\n"
-                        f"⭐ *مؤشر ثقة السيولة (ML):* `{top_stock['Confidence_Score']}/10`"
-                        f"{notes}\n\n"
-                        f"🎯 *الهدف المقترح ديناميكياً:* `+{target_pct}%` (سعر: `${top_stock['Price'] * (1 + target_pct/100.0):.2f}`)\n"
-                        f"🛡️ *وقف الخسارة الصارم:* `-5%` (سعر: `${top_stock['Price'] * 0.95:.2f}`)\n\n"
-                        f"⚠️ *ملاحظة:* هذه محاكاة تداول حية للحفاظ على رأس مالك."
-                    )
-                    
-                    success = notifier.send_custom_message(alert_msg)
-                    if success:
-                        from database import QuantDatabase
-                        db_log = QuantDatabase()
-                        db_log.log_alert_history(
-                            symbol=top_stock['Symbol'],
-                            price=top_stock['Price'],
-                            score=top_stock['Conviction_Score'],
-                            alert_type="شراء فوري بسعر السوق (طلب يدوي)",
-                            session=session_name,
-                            target_percent=target_pct,
-                            status="PENDING",
-                            initial_change=top_stock['Change_%']
+    # زر إجراء تحديث فوري مباشر
+    c_ref1, c_ref2 = st.columns([3, 1])
+    with c_ref1:
+        st.markdown(f"🔬 **حالة المعالجة الحالية:** عرض نتائج المحرك اللحظية لجلسة `{session_name}` **(استجابة فورية 0 ثانية ⚡)**")
+    with c_ref2:
+        force_refresh = st.button("⚡ تحديث حاد الآن (3 ثوانٍ)", key=f"force_scan_{session_name}")
+
+    if force_refresh:
+        with st.spinner("جاري إجراء تحديث فوري مباشر عبر البث المتوازي..."):
+            symbols = scanner.fetch_all_us_symbols()
+            if symbols:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                raw_data = loop.run_until_complete(scanner.scan_entire_market())
+                if raw_data:
+                    anomaly_map = intel.fit_anomaly_detector(raw_data, session_name)
+                    from decision_engine import DecisionEngine
+                    engine = DecisionEngine()
+                    for quote in raw_data[:50]:
+                        sym = quote.get("symbol")
+                        if not sym: continue
+                        sec_sentiment = get_sec_filings_sentiment(sym)
+                        anomaly_info = anomaly_map.get(sym, {"is_anomaly": False, "confidence_score": 1.0})
+                        trace = engine.evaluate_symbol(quote=quote, session=session_name, anomaly_info=anomaly_info, sec_sentiment=sec_sentiment)
+                        db.log_evaluation_trace(
+                            symbol=sym, price=trace["price"], change=trace["change"], rvol=trace["rvol"],
+                            score=trace["score"], ml_prob=trace["ml_prob"], status=trace["status"],
+                            reason=trace["rejection_reason"], details=trace["details"]
                         )
-                        st.success("✅ تم إرسال إشارة التنبيه بنجاح إلى هاتفك عبر تيليجرام!")
-                    else:
-                        st.error("❌ فشل إرسال التنبيه. يرجى التحقق من صحة المفاتيح في config.env أو Streamlit Secrets.")
-                
-                st.write("#### 🛡️ فحص طبقات اليقين السبعة للسهم المتصدر:")
-                cols = st.columns(7)
-                layer_names = [
-                    ("فلتر السعر", "Price_Filter"),
-                    ("درع الفجوة", "Gap_Shield"),
-                    ("منطقة الاختراق", "Early_Breakout"),
-                    ("تسارع الحجم RVOL", "RVOL_Acceleration"),
-                    ("زخم السيولة (RVOL/VWAP)", "Whale_Block"),
-                    ("عدم توازن السيولة", "OBI_Imbalance"),
-                    ("محفز الأخبار", "News_Catalyst")
-                ]
-                for i, (name, key) in enumerate(layer_names):
-                    val = matches.get(key)
-                    is_match = val is True or val in ["IDEAL", "HIGH", "STRONG_POSITIVE"]
-                    with cols[i]:
-                        if is_match:
-                            st.success(f"✅ {name}\n\n({val})")
-                        else:
-                            st.error(f"❌ {name}\n\n({val})")
-                
-                # --- القسم الثالث: فرز وتوزيع الصفقات لحماية رأس المال ---
-                st.write("---")
-                
-                # أ. صفقات الانفجار المعتمدة (High-Conviction Explosive Plays)
-                st.markdown("### 💥 صفقات الانفجار المعتمدة (High-Conviction Explosive Plays - Target dynamic / Stop -5%)")
-                st.write("أسهم فائقة القوة مطابقة لشروط الانفجار الميكروية الصارمة (مسار ضغط الشورت أو مسار محفز السيولة المنخفضة من الـ SEC).")
-                
-                # تطبيق محرك الانفجار ثنائي المسار (Dual-Track)
-                if not df_opportunities.empty:
-                    squeeze_track = (df_opportunities["Float_M"] <= 15.0) & (df_opportunities["Short_Pct"] >= 10.0)
-                    catalyst_track = (df_opportunities["Float_M"] <= 5.0) & (df_opportunities["Has_Catalyst"] == True)
-                    
-                    rvol_req = 0.05 if session_name in ["PRE_MARKET", "AFTER_HOURS"] else 4.0
-                    
-                    # المسار 1: أسهم ضغط الشورت (Short Squeeze)
-                    squeeze_cond = (
-                        (df_opportunities["Conviction_Score"] >= 80) &
-                        (df_opportunities["RVOL"] >= rvol_req) &
-                        (df_opportunities["Float_M"] <= 15.0) &
-                        (df_opportunities["Short_Pct"] >= 10.0) &
-                        (df_opportunities["ML_Probability"] >= 60.0)
-                    )
-                    # المسار 2: أسهم المحفز الإيجابي مع فلوت منخفض جداً
-                    catalyst_cond = (
-                        (df_opportunities["Conviction_Score"] >= 80) &
-                        (df_opportunities["RVOL"] >= rvol_req) &
-                        (df_opportunities["Float_M"] <= 5.0) &
-                        (df_opportunities["Has_Catalyst"] == True) &
-                        (df_opportunities["ML_Probability"] >= 50.0)
-                    )
-                    # المسار 3: أسهم عالية القناعة بدون شرط الفلوت (شبكة أمان)
-                    high_conviction_cond = (
-                        (df_opportunities["Conviction_Score"] >= 85) &
-                        (df_opportunities["RVOL"] >= rvol_req) &
-                        (~df_opportunities["Is_Dilution"])
-                    )
-                    df_explosive = df_opportunities[
-                        squeeze_cond | catalyst_cond | high_conviction_cond
-                    ].copy()
-                else:
-                    df_explosive = pd.DataFrame()
-                
-                if not df_explosive.empty:
-                    df_exp_display = df_explosive.copy()
-                    
-                    def get_track_type(row):
-                        if row["Float_M"] <= 15.0 and row["Short_Pct"] >= 10.0:
-                            return "💥 ضغط شورت"
-                        elif row["Float_M"] <= 5.0 and row["Has_Catalyst"]:
-                            return "⭐ محفز فلوت منخفض"
-                        return "نشط 🟢"
-                        
-                    df_exp_display["مسار الانفجار"] = df_exp_display.apply(get_track_type, axis=1)
-                    df_exp_display["التوجيه المباشر"] = df_exp_display.apply(get_direct_action, axis=1)
-                    df_exp_display["تطابق الخوارزمية"] = df_exp_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%")
-                    df_exp_display["احتمالية الانفجار (ML)"] = df_exp_display["ML_Probability"].apply(format_ml_prob)
-                    df_exp_display["الأسهم الحرة"] = df_exp_display["Float_M"].apply(lambda x: f"{x:.1f}M")
-                    df_exp_display["نسبة الشورت"] = df_exp_display["Short_Pct"].apply(lambda x: f"{x:.1f}%")
-                    df_exp_display["أيام التغطية (DTC)"] = df_exp_display["Days_To_Cover"].apply(lambda x: f"⏱️ {x:.1f} يوم")
-                    df_exp_display["حالة الإيقاف"] = df_exp_display.apply(lambda r: f"🚨 موقوف ({r['Halt_Reason']})" if r["Is_Halted"] else "🟢 نشط", axis=1)
-                    df_exp_display["تحذير التخفيف"] = df_exp_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
-                    df_exp_display["مؤشر الضغط"] = df_exp_display["Squeeze_Score"].apply(lambda x: f"💥 {x}%" if x >= 80 else f"⚡ {x}%" if x >= 50 else f"🟢 {x}%")
-                    
-                    df_exp_table = df_exp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "نسبة الشورت", "أيام التغطية (DTC)", "حالة الإيقاف", "تحذير التخفيف", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "مسار الانفجار", "Popularity", "Action_Directive"]].copy()
-                    df_exp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "نسبة الشورت", "أيام التغطية (DTC)", "حالة التداول", "التخفيف (Dilution)", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "مسار الانفجار", "الشهرة والبحث", "توجيه الشراء"]
-                    st.markdown(render_premium_table(df_exp_table), unsafe_allow_html=True)
-                else:
-                    st.info("ℹ️ لا توجد حالياً أسهم مطابقة لمعايير الانفجار السعري الصارمة في هذه اللحظة (RVOL >= 4.0, Float <= 15M, Short >= 10% أو فلوت <= 5M مع محفز SEC إيجابي).")
-                    
-                st.write("---")
-                
-                # ب. أسهم المضاربة اللحظية السريعة اليومية (Daily Fast Momentum Scalps)
-                st.markdown("### ⚡ أسهم المضاربة اللحظية السريعة اليومية (Daily Fast Momentum Scalps - Target +12% / Stop -5%)")
-                st.write("أسهم نشطة حركياً تشهد اختراق حجمي، ومناسبة للمضاربة السريعة خلال اليوم لتوليد الأرباح أثناء انتظار الصفقات الانفجارية.")
-                
-                df_scalp = df_opportunities[~df_opportunities["Symbol"].isin(df_explosive["Symbol"])].copy()
-                
-                if not df_scalp.empty:
-                    df_scalp_display = df_scalp.copy()
-                    df_scalp_display["التوجيه المباشر"] = df_scalp_display.apply(get_direct_action, axis=1)
-                    df_scalp_display["تطابق الخوارزمية"] = df_scalp_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%" if x >= 80 else f"⚡ {x}%")
-                    df_scalp_display["احتمالية الانفجار (ML)"] = df_scalp_display["ML_Probability"].apply(format_ml_prob)
-                    df_scalp_display["الأسهم الحرة"] = df_scalp_display["Float_M"].apply(lambda x: f"{x:.1f}M")
-                    df_scalp_display["حالة الإيقاف"] = df_scalp_display.apply(lambda r: f"🚨 موقوف ({r['Halt_Reason']})" if r["Is_Halted"] else "🟢 نشط", axis=1)
-                    df_scalp_display["تحذير التخفيف"] = df_scalp_display["Is_Dilution"].apply(lambda x: "🚨 خطر تخفيف (S-1)!" if x else "آمن ✅")
-                    df_scalp_display["مؤشر الضغط"] = df_scalp_display["Squeeze_Score"].apply(lambda x: f"💥 {x}%" if x >= 80 else f"⚡ {x}%" if x >= 50 else f"🟢 {x}%")
-                    
-                    df_scalp_table = df_scalp_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "حالة الإيقاف", "تحذير التخفيف", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "Popularity", "Action_Directive"]].copy()
-                    df_scalp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "حالة التداول", "التخفيف (Dilution)", "مؤشر الضغط", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "الشهرة والبحث", "توجيه الشراء"]
-                    st.markdown(render_premium_table(df_scalp_table), unsafe_allow_html=True)
-                else:
-                    st.info("ℹ️ لا توجد حالياً أسهم نشطة للمضاربة السريعة اليومية.")
-                    
-                if session_name == "AFTER_HOURS":
-                    st.write("---")
-                    st.markdown("### 🌙 رادار مرشحي الفجوات السعرية للغد (Overnight Gap-Up Candidates)")
-                    st.write("أسهم تظهر تراكماً للسيولة والارتفاع غير الطبيعي بعد الإغلاق مع وجود محفزات إيجابية، وهي مرشحة لافتتاح الغد بفجوة سعرية.")
-                    
-                    df_overnight = df_opportunities[
-                        (df_opportunities["Change_%"] >= 5.0) &
-                        (df_opportunities["RVOL"] >= 3.0) &
-                        (df_opportunities["Has_Catalyst"] == True)
-                    ].copy()
-                    
-                    if not df_overnight.empty:
-                        df_ov_display = df_overnight.copy()
-                        df_ov_display["التوجيه المباشر"] = df_ov_display.apply(get_direct_action, axis=1)
-                        df_ov_display["تطابق الخوارزمية"] = df_ov_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%")
-                        df_ov_display["احتمالية الانفجار (ML)"] = df_ov_display["ML_Probability"].apply(format_ml_prob)
-                        df_ov_display["الأسهم الحرة"] = df_ov_display["Float_M"].apply(lambda x: f"{x:.1f}M")
-                        
-                        df_ov_table = df_ov_display[["Symbol", "Price", "Change_%", "Volume", "RVOL", "الأسهم الحرة", "SEC_Tags", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "Popularity", "Action_Directive"]].copy()
-                        df_ov_table.columns = ["رمز السهم", "السعر المسائي", "التغير المسائي", "الحجم اليومي", "الحجم النسبي RVOL", "الأسهم الحرة", "المحفز الجوهري", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "الشهرة والبحث", "توجيه الشراء"]
-                        st.markdown(render_premium_table(df_ov_table), unsafe_allow_html=True)
-                    else:
-                        st.info("ℹ️ لا توجد حالياً أسهم مستوفية لشروط التراكم الليلي للغد (صعود >= 5%، حجم نسبي >= 3x، ومحفز SEC إيجابي).")
-                
-            else:
-                st.warning("⚠️ لا توجد حالياً أسهم رخيصة تحقق شروط الانفجار الصارمة ومؤشرات الشذوذ في هذه الجلسة.")
-        else:
-            st.error("❌ فشل الاتصال بقاعدة بيانات الرموز النشطة.")
+
+    # جلب أحدث النتائج المقبولة فورياً من قاعدة البيانات (0 ثانية تحميل)
+    recent_traces = db.get_recent_evaluations(limit=200)
+    accepted_traces = [t for t in recent_traces if t.get("status") == "ACCEPTED"]
+    active_halts = get_active_halts()
+
+    opportunities = []
+    seen_syms = set()
+    for trace in accepted_traces:
+        sym = trace.get("symbol")
+        if not sym or sym in seen_syms: continue
+        seen_syms.add(sym)
+        price = trace.get("price", 0.0)
+        change = trace.get("change", 0.0)
+        rvol = trace.get("rvol", 1.0)
+        score = trace.get("score", 0.0)
+        ml_prob = trace.get("ml_prob", 0.0)
+        is_halted = sym in active_halts
+        halt_reason = active_halts[sym] if is_halted else ""
+
+        action_lbl = get_direct_action({
+            "Is_Dilution": False,
+            "Change_%": change,
+            "Conviction_Score": score
+        })
+
+        opportunities.append({
+            "Symbol": sym,
+            "Price": price,
+            "Change_%": change,
+            "Volume": 0.0,
+            "RVOL": rvol,
+            "Conviction_Score": score,
+            "Is_Anomaly": True if score >= 80 else False,
+            "Confidence_Score": round(ml_prob / 10.0, 1),
+            "ML_Probability": ml_prob,
+            "Is_Trending": False,
+            "Is_Halted": is_halted,
+            "Halt_Reason": halt_reason,
+            "SEC_Tags": "محدث بالخلفية",
+            "Is_Dilution": False,
+            "Float_M": 10.0,
+            "Short_Pct": 0.0,
+            "Days_To_Cover": 0.0,
+            "Squeeze_Score": 0,
+            "Has_Catalyst": False,
+            "Matches": trace.get("details", {}),
+            "Action_Directive": action_lbl
+        })
+
+    df_opportunities = pd.DataFrame(opportunities)
+    if not df_opportunities.empty:
+        df_opportunities["ML_Probability"] = df_opportunities["ML_Probability"].fillna(0.0)
+        df_opportunities = df_opportunities.sort_values(by=["Conviction_Score", "ML_Probability"], ascending=[False, False])
+        
+        st.markdown("""
+        <div class="ai-section">
+            <h3 style="color:#3b82f6;margin:0 0 10px 0;font-size:20px;">🔍 محرك رصد الشذوذ الحجمي اللحظي (Anomaly Detection Engine)</h3>
+            <p style="color:#94a3b8;font-size:14px;margin-bottom:15px;">
+                عرض لحظي مباشر من المحرك للرموز التي تشهد انحرافاً حاداً في الحجم النسبي (RVOL) والتجميع اللحظي.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        df_anomalies = df_opportunities[df_opportunities["Is_Anomaly"] == True].copy()
+        
+        c_anom1, c_anom2 = st.columns(2)
+        with c_anom1:
+            st.metric(label="عدد الفرص الجارية بالفحص", value=f"{len(df_opportunities)} شركة")
+        with c_anom2:
+            st.metric(label="الانفجارات الحجمية المكتشفة", value=f"{len(df_anomalies)} أسهم شاذة")
+        
+        if not df_anomalies.empty:
+            st.write("📈 **قائمة الأسهم التي تشهد تجميعاً ونشاطاً استثنائياً حالياً:**")
+            df_anom_display = df_anomalies[["Symbol", "Price", "Change_%", "Volume", "RVOL", "Confidence_Score"]].copy()
+            df_anom_display.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "مؤشر ثقة الاختراق (0-10)"]
+            st.markdown(render_premium_table(df_anom_display), unsafe_allow_html=True)
+        
+        top_stock = df_opportunities.iloc[0]
+        matches = top_stock["Matches"]
+        target_pct_card = intel.calculate_dynamic_target(top_stock['Conviction_Score'], top_stock['Confidence_Score'] * 10.0)
+        st.markdown(f"""
+        <div class="signal-card">
+            <h2 style='color:#10b981; margin:0 0 10px 0; font-size:22px; font-weight:700;'>🎯 التوجيه التنفيذي للمركز الأول (أقوى تطابق كمي)</h2>
+            <h3>🔥 رمز السهم: {top_stock['Symbol']} | نسبة تطابق الخوارزمية: {top_stock['Conviction_Score']}%</h3>
+            <p style='font-size:18px;margin:5px 0;'>السعر الحالي: <b>{top_stock['Price']:.4f} $</b> | التغير اليومي: <b>{top_stock['Change_%']:+.2f}%</b> | تسارع الحجم النسبي: <b>{top_stock['RVOL']:.2f}x</b></p>
+            <h3 style="color:#00FFCC !important; margin: 5px 0;">🎯 القرار المقترح: {get_direct_action(top_stock)}</h3>
+            <p style='font-size:16px; margin:5px 0; color:#FFA500;'>💰 <b>الهدف المقترح:</b> +{target_pct_card}% (سعر: ${top_stock['Price'] * (1 + target_pct_card/100.0):.2f}) | 🛡️ <b>وقف الخسارة:</b> -5% (سعر: ${top_stock['Price'] * 0.95:.2f})</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.write("---")
+        st.markdown("### 💥 صفقات الانفجار المعتمدة (High-Conviction Explosive Plays)")
+        df_exp_display = df_opportunities.copy()
+        df_exp_display["التوجيه المباشر"] = df_exp_display.apply(get_direct_action, axis=1)
+        df_exp_display["تطابق الخوارزمية"] = df_exp_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%")
+        df_exp_display["احتمالية الانفجار (ML)"] = df_exp_display["ML_Probability"].apply(format_ml_prob)
+        df_exp_display["حالة الإيقاف"] = df_exp_display.apply(lambda r: f"🚨 موقوف ({r['Halt_Reason']})" if r["Is_Halted"] else "🟢 نشط", axis=1)
+        
+        df_exp_table = df_exp_display[["Symbol", "Price", "Change_%", "RVOL", "حالة الإيقاف", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "Popularity", "Action_Directive"]].copy()
+        df_exp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم النسبي RVOL", "حالة التداول", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "الشهرة والبحث", "توجيه الشراء"]
+        st.markdown(render_premium_table(df_exp_table), unsafe_allow_html=True)
+    else:
+        st.info("ℹ️ المحرك يعمل بالخلفية ويرسل التنبيهات فوراً لتيليجرام. لا توجد فرص مكتملة الشروط في هذه اللحظة.")
+
 
 with t1:
     st.markdown("### 🛰️ جلسة ما قبل الافتتاح (Pre-Market Scanner)")
