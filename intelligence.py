@@ -280,6 +280,30 @@ class QuantIntelligence:
         else:
             details["Retail_Trending_Boost"] = False
 
+        # 🚀 8. مؤشر سرعة دوران الفلوت الخارق (Float Turnover Acceleration Index - FTAI)
+        float_shares = self._safe_float(
+            quote.get("float_shares_outstanding") or quote.get("floatShares"),
+            10000000.0
+        )
+        ftai = (volume / float_shares * rvol) if float_shares > 0 else 0.0
+        details["FTAI_Score"] = round(ftai, 2)
+
+        if float_shares < 5000000.0 and ftai >= 0.8 and 1.5 <= price_change <= 12.0:
+            score += 25  # مكافأة صيد الانفجار الخارق الفوري في القاع
+            details["Supernova_FTAI_Early"] = True
+        elif float_shares < 10000000.0 and ftai >= 0.4 and 1.5 <= price_change <= 15.0:
+            score += 15
+            details["Supernova_FTAI_Early"] = "MEDIUM"
+        else:
+            details["Supernova_FTAI_Early"] = False
+
+        # 🌀 9. مؤشر انكماش التذبذب ورصد الانفجار الصامت (Volatility Squeeze Coiling Engine)
+        if 1.5 <= price_change <= 8.0 and rvol >= 3.0:
+            score += 20  # مكافأة رصد تجميع السيولة الصامتة قبل القفزة الفجائية
+            details["Volatility_Squeeze_Coil"] = True
+        else:
+            details["Volatility_Squeeze_Coil"] = False
+
         final_score = max(0, min(100, score))
         return final_score, details, price, price_change, rvol
 

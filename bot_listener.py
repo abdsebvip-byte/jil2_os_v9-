@@ -2,6 +2,14 @@
 import time
 import requests
 import json
+import logging
+logging.basicConfig(
+    filename="bot_listener.log",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    encoding="utf-8"
+)
+
 from yahooquery import Ticker
 from database import QuantDatabase
 from scanner import FreeMarketScanner
@@ -407,3 +415,12 @@ class TelegramBotListener:
 def start_bot_thread():
     bot = TelegramBotListener()
     bot.start_polling()
+
+
+if __name__ == "__main__":
+    import dotenv
+    import os
+    dotenv.load_dotenv("config.env")
+    with open("bot_listener.pid", "w") as f:
+        f.write(str(os.getpid()))
+    start_bot_thread()

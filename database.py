@@ -163,6 +163,23 @@ class QuantDatabase:
                 )
             """)
             
+            # جدول تتبع قرارات الفحص والاستبعاد الكامل للأسهم
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS evaluation_trace (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    evaluated_at TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    change REAL NOT NULL,
+                    rvol REAL NOT NULL,
+                    score REAL NOT NULL,
+                    ml_prob REAL NOT NULL,
+                    status TEXT NOT NULL,
+                    rejection_reason TEXT,
+                    details TEXT
+                )
+            """)
+            
             # تهيئة الرصيد الافتراضي بـ 1000 دولار إذا لم يكن موجوداً
             cursor.execute("SELECT COUNT(*) FROM account_balance")
             if cursor.fetchone()[0] == 0:
@@ -302,6 +319,50 @@ class QuantDatabase:
                 VALUES (?, ?)
             """, (symbol, datetime.now().isoformat()))
             conn.commit()
+
+    def log_evaluation_trace(self, symbol, price, change, rvol, score, ml_prob, status, reason, details=""):
+        import json
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO evaluation_trace (symbol, evaluated_at, price, change, rvol, score, ml_prob, status, rejection_reason, details)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    symbol.upper().strip(),
+                    datetime.now().isoformat(),
+                    float(price),
+                    float(change),
+                    float(rvol),
+                    float(score),
+                    float(ml_prob),
+                    str(status),
+                    str(reason),
+                    json.dumps(details) if isinstance(details, dict) else str(details)
+                ))
+                # الحفاظ على آخر 1000 سجل فقط لمنع تضخم حجم قاعدة البيانات
+                cursor.execute("DELETE FROM evaluation_trace WHERE id NOT IN (SELECT id FROM evaluation_trace ORDER BY id DESC LIMIT 1000)")
+                conn.commit()
+        except Exception as e:
+            import logging
+            logging.warning(f"Database: Failed to log evaluation trace: {e}")
+
+    def get_recent_evaluations(self, limit=100):
+        try:
+            with self.get_connection() as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, symbol, evaluated_at, price, change, rvol, score, ml_prob, status, rejection_reason, details
+                    FROM evaluation_trace
+                    ORDER BY id DESC
+                    LIMIT ?
+                """, (limit,))
+                return [dict(r) for r in cursor.fetchall()]
+        except Exception as e:
+            import logging
+            logging.warning(f"Database: Failed to fetch evaluation trace: {e}")
+            return []
 
     def log_alert_history(self, symbol, price, score, alert_type, session="REGULAR_SESSION", target_percent=12.0, status="PENDING", initial_change=0.0):
         symbol = symbol.upper().strip()

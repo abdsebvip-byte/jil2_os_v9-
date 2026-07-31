@@ -7,8 +7,15 @@ from yahooquery import Screener
 
 class FreeMarketScanner:
     def __init__(self):
-        self.screener = Screener()
+        # تأجيل تهيئة Screener حتى أول استخدام فعلي لتجنب الـ timeout عند الإقلاع
+        self._screener = None
         self.cached_quotes = []
+
+    @property
+    def screener(self):
+        if self._screener is None:
+            self._screener = Screener()
+        return self._screener
 
     def get_current_market_session(self):
         """
@@ -44,16 +51,47 @@ class FreeMarketScanner:
 
     def fetch_all_us_symbols(self):
         """
-        Pull all active tickers from TradingView's real-time API (NASDAQ/NYSE/AMEX).
-        Falls back to Yahoo Finance screeners on failure (Zero Latency + High Stability).
+        Pull active tickers from TradingView's real-time API (NASDAQ/NYSE/AMEX).
+        Uses a Dual Engine (RVOL Acceleration + Top Gainers) scanning up to 1,000 stocks simultaneously.
+        This guarantees early discovery of stocks right as volume spikes (+1.5% to +10%) before prices explode.
         """
         import requests
         
         url = "https://scanner.tradingview.com/america/scan"
-        payload = {
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Content-Type": "application/json"
+        }
+
+        columns = [
+            "name", "close", "change", "volume", "relative_volume_10d_active",
+            "float_shares_outstanding", "average_volume_30d_calc", "VWAP", "Value.Traded",
+            "premarket_close", "premarket_change", "postmarket_close", "postmarket_change",
+            "short_percent_of_float", "short_ratio"
+        ]
+
+        # Engine 1: Early Volume Acceleration / RVOL Spikes (Early Discovery at +1.5% to +15%)
+        payload_rvol = {
             "filter": [
                 {"left": "close", "operation": "egreater", "right": 0.1},
-                {"left": "close", "operation": "eless", "right": 20.0},
+                {"left": "close", "operation": "eless", "right": 30.0},
+                {"left": "change", "operation": "egreater", "right": 1.5},
+                {"left": "volume", "operation": "egreater", "right": 15000},
+                {"left": "exchange", "operation": "in_range", "right": ["NASDAQ", "NYSE", "AMEX"]}
+            ],
+            "options": {"active_symbols_only": True},
+            "markets": ["america"],
+            "symbols": {"query": {"types": []}, "tickers": []},
+            "columns": columns,
+            "sort": {"sortBy": "relative_volume_10d_active", "sortOrder": "desc"},
+            "range": [0, 500]
+        }
+
+        # Engine 2: Top Market Price Gainers
+        payload_gainers = {
+            "filter": [
+                {"left": "close", "operation": "egreater", "right": 0.1},
+                {"left": "close", "operation": "eless", "right": 30.0},
                 {"left": "change", "operation": "egreater", "right": 2.0},
                 {"left": "volume", "operation": "egreater", "right": 20000},
                 {"left": "exchange", "operation": "in_range", "right": ["NASDAQ", "NYSE", "AMEX"]}
@@ -61,81 +99,61 @@ class FreeMarketScanner:
             "options": {"active_symbols_only": True},
             "markets": ["america"],
             "symbols": {"query": {"types": []}, "tickers": []},
-            "columns": [
-                "name",
-                "close",
-                "change",
-                "volume",
-                "relative_volume_10d_active",
-                "float_shares_outstanding",
-                "average_volume_30d_calc",
-                "VWAP",
-                "Value.Traded",
-                "premarket_close",
-                "premarket_change",
-                "postmarket_close",
-                "postmarket_change",
-                "short_percent_of_float",
-                "short_ratio"
-            ],
+            "columns": columns,
             "sort": {"sortBy": "change", "sortOrder": "desc"},
-            "range": [0, 100]
+            "range": [0, 500]
         }
-        
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            "Content-Type": "application/json"
-        }
-        
+
+        quotes = []
+        seen_symbols = set()
+
         try:
-            print("fetch_all_us_symbols: Fetching real-time gainers from TradingView API...")
-            response = requests.post(url, json=payload, headers=headers, timeout=8)
-            if response.status_code == 200:
-                data = response.json()
-                rows = data.get("data", [])
-                quotes = []
-                seen_symbols = set()
-                
-                for item in rows:
-                    sym = item.get("s", "")
-                    d = item.get("d", [])
-                    if not sym or len(d) < 9:
-                        continue
-                    ticker = sym.split(":")[-1]
-                    if ticker and ticker.isalpha() and ticker not in seen_symbols:
-                        seen_symbols.add(ticker)
-                        
-                        # Map TradingView variables to simulated Yahoo quote format
-                        quotes.append({
-                            "symbol": ticker,
-                            "regularMarketPrice": float(d[1] or 0.0),
-                            "regularMarketChangePercent": float(d[2] or 0.0),
-                            "regularMarketVolume": float(d[3] or 0.0),
-                            "averageDailyVolume3Month": float(d[6] or 100000.0),
-                            "regularMarketPreviousClose": float(d[1] or 0.0) / (1.0 + (float(d[2] or 0.0) / 100.0)) if d[2] else float(d[1] or 0.0),
-                            "regularMarketOpen": float(d[1] or 0.0),
-                            "preMarketPrice": float(d[9] or d[1] or 0.0) if len(d) > 9 and d[9] is not None else float(d[1] or 0.0),
-                            "preMarketChangePercent": float(d[10] or 0.0) if len(d) > 10 and d[10] is not None else 0.0,
-                            "postMarketPrice": float(d[11] or d[1] or 0.0) if len(d) > 11 and d[11] is not None else float(d[1] or 0.0),
-                            "postMarketChangePercent": float(d[12] or 0.0) if len(d) > 12 and d[12] is not None else 0.0,
-                            "bid": float(d[1] or 0.0),
-                            "ask": float(d[1] or 0.0),
-                            "bidSize": 100.0,
-                            "askSize": 100.0,
-                            "vwap": float(d[7] or 0.0),
-                            "value_traded": float(d[8] or 0.0),
-                            "float_shares_outstanding": float(d[5] or 10000000.0),
-                            "short_percent": float(d[13] or 0.0) if len(d) > 13 and d[13] is not None else 0.0,
-                            "days_to_cover": float(d[14] or 0.0) if len(d) > 14 and d[14] is not None else 0.0
-                        })
-                
+            for payload, label in [(payload_rvol, "RVOL Early Discovery"), (payload_gainers, "Top Gainers")]:
+                try:
+                    res = requests.post(url, json=payload, headers=headers, timeout=8)
+                    if res.status_code == 200:
+                        rows = res.json().get("data", [])
+                        for item in rows:
+                            sym = item.get("s", "")
+                            d = item.get("d", [])
+                            if not sym or len(d) < 9:
+                                continue
+                            ticker = sym.split(":")[-1]
+                            if ticker and ticker.isalpha() and ticker not in seen_symbols:
+                                seen_symbols.add(ticker)
+                                quotes.append({
+                                    "symbol": ticker,
+                                    "regularMarketPrice": float(d[1] or 0.0),
+                                    "regularMarketChangePercent": float(d[2] or 0.0),
+                                    "regularMarketVolume": float(d[3] or 0.0),
+                                    "averageDailyVolume3Month": float(d[6] or 100000.0),
+                                    "regularMarketPreviousClose": float(d[1] or 0.0) / (1.0 + (float(d[2] or 0.0) / 100.0)) if d[2] else float(d[1] or 0.0),
+                                    "regularMarketOpen": float(d[1] or 0.0),
+                                    "preMarketPrice": float(d[9] or d[1] or 0.0) if len(d) > 9 and d[9] is not None else float(d[1] or 0.0),
+                                    "preMarketChangePercent": float(d[10] or 0.0) if len(d) > 10 and d[10] is not None else 0.0,
+                                    "postMarketPrice": float(d[11] or d[1] or 0.0) if len(d) > 11 and d[11] is not None else float(d[1] or 0.0),
+                                    "postMarketChangePercent": float(d[12] or 0.0) if len(d) > 12 and d[12] is not None else 0.0,
+                                    "bid": float(d[1] or 0.0),
+                                    "ask": float(d[1] or 0.0),
+                                    "bidSize": 100.0,
+                                    "askSize": 100.0,
+                                    "vwap": float(d[7] or 0.0),
+                                    "value_traded": float(d[8] or 0.0),
+                                    "float_shares_outstanding": float(d[5] or 10000000.0),
+                                    "short_percent": float(d[13] or 0.0) if len(d) > 13 and d[13] is not None else 0.0,
+                                    "days_to_cover": float(d[14] or 0.0) if len(d) > 14 and d[14] is not None else 0.0
+                                })
+                except Exception as e:
+                    print(f"fetch_all_us_symbols: {label} query error ({e})")
+
+            if quotes:
                 self.cached_quotes = quotes
                 symbols = list(seen_symbols)
-                print(f"fetch_all_us_symbols (TradingView): Found {len(symbols)} real-time active stocks.")
+                print(f"fetch_all_us_symbols (Dual Engine): Found {len(symbols)} real-time active stocks across RVOL and Gainers.")
                 return symbols
             else:
-                print(f"fetch_all_us_symbols: TradingView returned status {response.status_code}. Reverting to Yahoo fallback...")
-                raise ValueError("TradingView API Down")
+                print("fetch_all_us_symbols: TradingView API returned empty. Reverting to Yahoo fallback...")
+                raise ValueError("TradingView API Empty")
         except Exception as tv_err:
             print(f"fetch_all_us_symbols: TradingView query failed ({str(tv_err)}). Reverting to Yahoo Finance fallback...")
             # Fallback to Yahoo screeners

@@ -9,3 +9,11 @@ config.env
 
 # Ignore Streamlit local run configs
 .streamlit/
+
+# Ignore local logs, databases, and temporary archives
+*.log
+*.pid
+*.db*
+*.zip
+ngrok.exe
+

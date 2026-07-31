@@ -3,6 +3,11 @@ import requests
 import re
 import yfinance as yf
 import logging
+import time as _time
+
+# كاش بسيط لنتائج SEC بمدة 5 دقائق لتجنب طلبات مكررة خلال دورة المسح الواحدة
+_SEC_CACHE: dict = {}
+_SEC_CACHE_TTL = 300  # ثواني (5 دقائق)
 
 def get_active_halts():
     """
@@ -43,7 +48,15 @@ def get_sec_filings_sentiment(symbol):
     """
     Fetch the latest news for a symbol via yfinance, and scan titles/summaries
     for SEC Form 4 (insider buy), Form 8-K (material event), and Form S-1 (dilution warning).
+    نتيجة كل رمز تُخزّن 5 دقائق لتجنب تكرار طلبات HTTP.
     """
+    global _SEC_CACHE
+    now = _time.monotonic()
+    if symbol in _SEC_CACHE:
+        cached_val, cached_at = _SEC_CACHE[symbol]
+        if now - cached_at < _SEC_CACHE_TTL:
+            return cached_val
+
     sentiment = {
         "insider_buy": False,
         "material_news": False,
@@ -55,6 +68,7 @@ def get_sec_filings_sentiment(symbol):
         ticker = yf.Ticker(symbol)
         news = ticker.news
         if not news:
+            _SEC_CACHE[symbol] = (sentiment, now)
             return sentiment
             
         for article in news[:5]:
@@ -79,4 +93,6 @@ def get_sec_filings_sentiment(symbol):
     except Exception as e:
         logging.warning(f"SECFilingsTracker Error for {symbol}: {e}")
         
+    # حفظ النتيجة في الكاش قبل الإرجاع
+    _SEC_CACHE[symbol] = (sentiment, now)
     return sentiment

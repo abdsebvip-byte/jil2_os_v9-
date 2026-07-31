@@ -7,11 +7,19 @@ import logging
 from dotenv import load_dotenv
 load_dotenv("config.env")
 
+logging.basicConfig(
+    filename="auto_scanner.log",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    encoding="utf-8"
+)
+
 from scanner import FreeMarketScanner
 from intelligence import QuantIntelligence
 from notifier import TelegramNotifier
 from database import QuantDatabase
 from alerts_tracker import get_active_halts, get_sec_filings_sentiment
+from decision_engine import DecisionEngine
 
 
 def _env_int(name, default, minimum=1):
@@ -112,7 +120,19 @@ def start_scheduler():
     Runs a full market scan every 180 seconds.
     """
     print("Background Scanner: Scheduler thread started successfully.")
-    scanner = FreeMarketScanner()
+    # إعادة المحاولة عند فشل الاتصال بـ Yahoo Finance (timeout) بدلاً من إيقاف الـ daemon
+    scanner = None
+    for attempt in range(1, 20):
+        try:
+            scanner = FreeMarketScanner()
+            print(f"Background Scanner: FreeMarketScanner initialized (attempt {attempt})")
+            break
+        except Exception as init_err:
+            print(f"Background Scanner: Init attempt {attempt} failed: {init_err}. Retrying in 30s...")
+            time.sleep(30)
+    if scanner is None:
+        print("Background Scanner: All init attempts failed. Exiting.")
+        return
     intel = QuantIntelligence()
     notifier = TelegramNotifier()
     db = QuantDatabase()
@@ -199,31 +219,44 @@ def start_scheduler():
                             
                             # Fetch news catalyst (SEC Form 4 or 8-K)
                             sec_sentiment = get_sec_filings_sentiment(sym)
-                            is_dilution = sec_sentiment["dilution_warning"]
-
                             anomaly_info = {"is_anomaly": True, "confidence_score": 7.0} 
-                            score, details, prc, chg, rv = intel.calculate_7_layer_conviction(price_data, session, anomaly_info, sec_sentiment=sec_sentiment)
                             
-                            # Apply SEC boosts
-                            if sec_sentiment.get("insider_buy"):
-                                score = min(100, score + 15)
-                            if sec_sentiment.get("material_news"):
-                                score = min(100, score + 10)
-                            if is_dilution:
-                                score = max(0, score - 70)
-                                
-                            # Skip if dilution warning or low conviction
-                            if is_dilution or score < 75:
+                            engine = DecisionEngine()
+                            trace = engine.evaluate_symbol(
+                                quote=price_data,
+                                session=session,
+                                anomaly_info=anomaly_info,
+                                sec_sentiment=sec_sentiment,
+                                is_trending=False
+                            )
+                            
+                            # تسجيل كامل مسار القرار في قاعدة البيانات لضمان الشفافية
+                            db.log_evaluation_trace(
+                                symbol=sym,
+                                price=trace["price"],
+                                change=trace["change"],
+                                rvol=trace["rvol"],
+                                score=trace["score"],
+                                ml_prob=trace["ml_prob"],
+                                status=trace["status"],
+                                reason=trace["rejection_reason"],
+                                details=trace["details"]
+                            )
+                            
+                            if trace["status"] != "ACCEPTED":
                                 notified_halts.add(sym)
                                 continue
                                 
+                            score = trace["score"]
+                            ml_prob = trace["ml_prob"]
+                            
                             # Determine dynamic target percentage
-                            target_pct = intel.calculate_dynamic_target(score, 70.0, quote=price_data)
+                            target_pct = intel.calculate_dynamic_target(score, ml_prob, quote=price_data)
                             
                             action_lbl = intel.get_execution_directive(
                                 quote=price_data,
                                 score=score,
-                                ml_prob=70.0,
+                                ml_prob=ml_prob,
                                 session=session,
                                 sec_sentiment=sec_sentiment,
                                 is_halted=True
@@ -352,78 +385,68 @@ def start_scheduler():
                             price = _safe_float(quote.get("postMarketPrice"), price)
                             change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else change
 
-                        # فلتر السعر والتغيير — شروط صارمة للأسهم الانفجارية الحقيقية فقط
-                        # السعر: 0.1 دولار إلى 20 دولار | التغيير: من 5% إلى 100%
-                        if price <= 0.0 or price > 20.0 or change < 5.0 or change > 100.0:
-                            continue
-
-                        # Check RVOL and Float before loading news to save API bandwidth
-                        thresholds = intel.get_thresholds()
-                        float_shares = quote.get("float_shares_outstanding")
-                        if float_shares is not None and _safe_float(float_shares, thresholds["float_max"]) > thresholds["float_max"]:
-                            continue
-                            
-                        volume = _safe_float(quote.get("regularMarketVolume"), 0.0)
-                        avg_volume = _safe_float(quote.get("averageDailyVolume3Month"), 100000.0)
-                        rvol = volume / avg_volume if avg_volume > 0 else 1.0
-                        
-                        rvol_limit = thresholds["rvol_min"]
-                        if session in ["PRE_MARKET", "AFTER_HOURS"]:
-                            rvol_limit = 0.05 # خفض شرط الحجم النسبي في الفترات الممتدة نظراً لضعف السيولة بطبيعتها
-                            
-                        if rvol < rvol_limit:
-                            continue
-
-                        # Session specific filters
-                        if session == "PRE_MARKET":
-                            pre_chg = quote.get("preMarketChangePercent")
-                            if pre_chg is None or float(pre_chg) == 0.0:
-                                continue
-                        elif session == "AFTER_HOURS":
-                            post_chg = quote.get("postMarketChangePercent")
-                            if post_chg is None or float(post_chg) == 0.0:
-                                continue
-
                         # Fetch news catalyst (SEC Form 4 or 8-K)
                         sec_sentiment = get_sec_filings_sentiment(sym)
-
-                        # Calculate conviction score and features with catalyst context
                         anomaly_info = anomaly_map.get(sym, {"is_anomaly": False, "confidence_score": 1.0})
                         
                         is_yahoo = sym in yahoo_trending
                         is_reddit = sym in reddit_trending
                         is_trending = is_yahoo or is_reddit
                         
-                        score, details, price, change, rvol = intel.calculate_7_layer_conviction(
-                            quote, session, anomaly_info, sec_sentiment=sec_sentiment, is_trending=is_trending
+                        # 1. تقييم السهم عبر محرك القرار المركزي
+                        engine = DecisionEngine()
+                        trace = engine.evaluate_symbol(
+                            quote=quote,
+                            session=session,
+                            anomaly_info=anomaly_info,
+                            sec_sentiment=sec_sentiment,
+                            is_trending=is_trending
                         )
-
-                        # تفعيل التنبيه إذا كانت قناعة الخوارزمية عالية جداً — شروط صارمة للحفاظ على الجودة
-                        if score >= 80 and anomaly_info["confidence_score"] >= 5.0:
+                        
+                        # 2. تسجيل القرار كاملاً في قاعدة البيانات (سواء مقبول أو مستبعد)
+                        db.log_evaluation_trace(
+                            symbol=sym,
+                            price=trace["price"],
+                            change=trace["change"],
+                            rvol=trace["rvol"],
+                            score=trace["score"],
+                            ml_prob=trace["ml_prob"],
+                            status=trace["status"],
+                            reason=trace["rejection_reason"],
+                            details=trace["details"]
+                        )
+                        
+                        # 3. إرسال تنبيه في حال القبول فقط
+                        if trace["status"] == "ACCEPTED":
                             if db.check_alert_sent_recently(sym, hours=3):
                                 continue
+                                
+                            # 🔄 تحديث مباشر ولحظي للسعر الآن قبل إرسال التنبيه لإلغاء أي تأخير بيانات (Stale Data Guard)
+                            try:
+                                import yfinance as _yf
+                                _fast_info = _yf.Ticker(sym).fast_info
+                                _live_p = float(_fast_info.get("lastPrice") or 0.0)
+                                _live_pc = float(_fast_info.get("previousClose") or 0.0)
+                                if _live_p > 0.0 and _live_pc > 0.0:
+                                    price = _live_p
+                                    change = ((_live_p - _live_pc) / _live_pc) * 100.0
+                            except Exception as _p_err:
+                                pass
 
-                            # Dilution Protection: Skip alert if Form S-1 Dilution detected!
-                            if sec_sentiment["dilution_warning"]:
-                                logging.warning(f"Background Scanner: Skipped dilution target {sym}.")
+                            # حارس الارتفاع المفرط اللحظي: إذا أظهر السعر المباشر الآن أن السهم انفجر وتجاوز +45% -> يُلغى التنبيه فوراً!
+                            if change > 45.0:
+                                logging.info(f"AutoScanner: Cancelled alert for {sym} - live price updated to ${price:.4f} (+{change:.1f}%) > +45% safe limit.")
                                 continue
-                                
-                            # Dynamic Score Adjustments:
-                            # 1. Insider buying (Form 4) boost (+15%)
-                            if sec_sentiment.get("insider_buy"):
-                                score = min(100, score + 15)
-                            # 2. Material event (Form 8-K) boost (+10%)
-                            if sec_sentiment.get("material_news"):
-                                score = min(100, score + 10)
-                            # 3. Social popularity and search boost (+10%)
-                            if is_trending and score >= 70:
-                                score = min(100, score + 10)
-                                
+
+                            score = trace["score"]
+                            ml_prob = trace["ml_prob"]
+                            rvol = trace["rvol"]
+                            
                             # Add custom notes for positive catalysts
                             notes = ""
-                            if sec_sentiment["insider_buy"]:
+                            if sec_sentiment.get("insider_buy"):
                                 notes += "\n⭐ *تنبيه المطلعين:* تم رصد شراء مسؤولين لأسهمهم (Form 4)!"
-                            if sec_sentiment["material_news"]:
+                            if sec_sentiment.get("material_news"):
                                 notes += "\n📝 *حدث جوهري:* تم رصد أخبار أو شراكة جديدة (Form 8-K)!"
                                 
                             # Add custom notes for popularity
@@ -434,12 +457,12 @@ def start_scheduler():
                             elif is_reddit:
                                 notes += "\n💬 *الشهرة والبحث:* نقاش متداول في منتدى ريديت!"
                                 
-                            target_pct = intel.calculate_dynamic_target(score, anomaly_info["confidence_score"] * 10.0, quote=quote)
+                            target_pct = intel.calculate_dynamic_target(score, ml_prob, quote=quote)
                             
                             action_lbl = intel.get_execution_directive(
                                 quote=quote,
                                 score=score,
-                                ml_prob=anomaly_info["confidence_score"] * 10.0,
+                                ml_prob=ml_prob,
                                 session=session,
                                 sec_sentiment=sec_sentiment,
                                 is_halted=False
@@ -447,19 +470,23 @@ def start_scheduler():
                             
                             exit_strategy = intel.get_exit_strategy(target_pct)
                                 
-                            # --- تقييم مستوى المخاطرة بناءً على حجم الارتفاع المسبق ---
-                            if change >= 50.0:
-                                risk_label = "🔴 مخاطرة عالية جداً"
-                                risk_note = f"⚠️ *تحذير:* السهم ارتفع بالفعل `+{change:.1f}%` قبل هذا التنبيه — قد يكون متأخراً للدخول. ادرس السبب قبل أي قرار."
-                            elif change >= 20.0:
+                            # --- تقييم مستوى المخاطرة والتوجيه بناءً على حجم الارتفاع المسبق ---
+                            if change >= 30.0:
+                                header_text = "⚠️ *رصد حركة متقدمة (دخول بحذر — Limit Order فقط!)* ⚠️"
+                                action_lbl = f"⚠️ أمر محدد فقط (Limit Order) بسعر `${price * 0.98:.4f}` أو أقل (ممنوع الشراء بسعر السوق ماركت!)"
+                                risk_label = "🔴 مخاطرة عالية (ارتفاع مسبق)"
+                                risk_note = f"🛑 *تحذير صارم:* السهم مرتفع بالفعل `+{change:.1f}%` — **ممنوع تماماً الشراء بسعر السوق (Market Order)** لتجنب الانزلاق والهبوط المفاجئ! ادخل فقط بأمر محدد بسعر أقل من الحالي."
+                            elif change >= 18.0:
+                                header_text = "🎯 *فرصة انفجار سعري مكتشفة!* 🚀"
                                 risk_label = "🟡 مخاطرة متوسطة"
-                                risk_note = f"⚠️ *تنبيه:* السهم ارتفع `+{change:.1f}%` — تأكد من وجود محفز حقيقي قبل الدخول."
+                                risk_note = f"⚠️ *تنبيه:* الارتفاع الحالي `+{change:.1f}%` — يفضل انتظار تراجع بسيط أو الشراء بأمر محدد."
                             else:
-                                risk_label = "🟢 مخاطرة منخفضة نسبياً"
-                                risk_note = f"✅ الارتفاع الحالي `+{change:.1f}%` ضمن النطاق الطبيعي للاكتشاف المبكر."
+                                header_text = "🚀 *فرصة اكتشاف مبكر نادرة (آمنة للغاية)!* 🟢"
+                                risk_label = "🟢 مخاطرة منخفضة (اكتشاف في القاع)"
+                                risk_note = f"✅ الارتفاع الحالي `+{change:.1f}%` في البداية المطلوبة — دخول ممتاز في بداية الزخم."
 
                             alert_msg = (
-                                f"🎯 *فرصة انفجار سعري مكتشفة!*\n\n"
+                                f"{header_text}\n\n"
                                 f"🏢 *رمز السهم:* `{sym}`\n"
                                 f"🚦 *توجيه الشراء:* {action_lbl}\n"
                                 f"⚡ *مستوى المخاطرة:* {risk_label}\n\n"
@@ -467,12 +494,12 @@ def start_scheduler():
                                 f"📈 *التغير اليومي:* `+{change:.2f}%`\n"
                                 f"🔊 *الحجم النسبي RVOL:* `{rvol:.2f}x`\n"
                                 f"🔥 *نسبة تطابق الخوارزمية:* `{score}%`\n"
-                                f"⭐ *مؤشر ثقة السيولة (ML):* `{anomaly_info['confidence_score']}/10`"
+                                f"⭐ *مؤشر ثقة السيولة (ML):* `{ml_prob:.1f}%`"
                                 f"{notes}\n\n"
                                 f"🎯 *الهدف المقترح ديناميكياً:* `+{target_pct}%` (سعر: `${price * (1 + target_pct/100.0):.2f}`)\n"
                                 f"🛡️ *وقف الخسارة الصارم:* `-5%` (سعر: `${price * 0.95:.2f}`)\n"
                                 f"💰 *استراتيجية التداول:* {exit_strategy}\n\n"
-                                f"{risk_note}\n"
+                                f"{risk_note}\n\n"
                                 f"📌 *هذه منصة رصد وبحث — قرار التداول مسؤوليتك الكاملة.*"
                             )
                             
@@ -514,3 +541,12 @@ def start_scheduler():
         except Exception as e:
             logging.error(f"Background Scanner Main Loop Critical Error: {e}")
             time.sleep(halt_poll_seconds)
+
+
+if __name__ == "__main__":
+    import dotenv
+    import os
+    dotenv.load_dotenv("config.env")
+    with open("auto_scanner.pid", "w") as f:
+        f.write(str(os.getpid()))
+    start_scheduler()

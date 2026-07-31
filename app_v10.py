@@ -26,6 +26,9 @@ from intelligence import QuantIntelligence
 from news_radar import SECNewsRadar
 from notifier import TelegramNotifier
 from alerts_tracker import get_active_halts, get_sec_filings_sentiment
+from database import QuantDatabase
+
+db = QuantDatabase()
 
 # إعداد ملف مراقبة الأخطاء المركزي (Centralized Error Logging)
 logging.basicConfig(
@@ -294,19 +297,50 @@ scanner = FreeMarketScanner()
 intel = QuantIntelligence()
 news_radar = SECNewsRadar()
 
-# تفعيل مشغل الفحص التلقائي الخلفي مع فحص الحالة الذاتي ومنع التوقف الصامت
+# فحص PID مباشرة باستخدام ctypes للتحقق من تشغيل العملية
+def _pid_alive(pid):
+    """Check if a PID is alive using ctypes OpenProcess (no subprocess overhead)."""
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        SYNCHRONIZE = 0x00100000
+        handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        return False
+    except:
+        return False
+
+# تفعيل مشغل الفحص التلقائي الخلفي كعملية مستقلة (Subprocess)
 def initialize_background_auto_scanner():
-    import threading
-    thread_exists = any(t.name == "AutoScannerThread" for t in threading.enumerate())
-    if not thread_exists:
+    import os
+    import subprocess
+    pid_file = "auto_scanner.pid"
+    if os.path.exists(pid_file):
         try:
-            from auto_scanner import start_scheduler
-            thread = threading.Thread(target=start_scheduler, name="AutoScannerThread", daemon=True)
-            thread.start()
-            return "STARTED"
-        except Exception as e:
-            return f"ERROR: {e}"
-    return "ALREADY_RUNNING"
+            pid = int(open(pid_file).read().strip())
+            if _pid_alive(pid):
+                return "ALREADY_RUNNING"
+        except:
+            pass
+
+    venv_python = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "Scripts", "python.exe")
+    if not os.path.exists(venv_python):
+        import sys
+        venv_python = sys.executable
+
+    try:
+        proc = subprocess.Popen(
+            [venv_python, "auto_scanner.py"],
+            creationflags=0x08000000,  # CREATE_NO_WINDOW
+            cwd=os.path.dirname(os.path.abspath(__file__))
+        )
+        with open(pid_file, "w") as pf:
+            pf.write(str(proc.pid))
+        return "STARTED"
+    except Exception as e:
+        return f"ERROR: {e}"
 
 auto_status = initialize_background_auto_scanner()
 
@@ -315,19 +349,35 @@ def format_ml_prob(val):
         return "⚠️ غير نشط"
     return f"🔮 {val:.1f}%"
 
-# تفعيل خادم البوت التفاعلي مع الفحص الذاتي للخيوط
+# تفعيل خادم البوت التفاعلي كعملية مستقلة (Subprocess)
 def initialize_interactive_bot():
-    import threading
-    thread_exists = any(t.name == "InteractiveBotThread" for t in threading.enumerate())
-    if not thread_exists:
+    import os
+    import subprocess
+    pid_file = "bot_listener.pid"
+    if os.path.exists(pid_file):
         try:
-            from bot_listener import start_bot_thread
-            thread = threading.Thread(target=start_bot_thread, name="InteractiveBotThread", daemon=True)
-            thread.start()
-            return "STARTED"
-        except Exception as e:
-            return f"ERROR: {e}"
-    return "ALREADY_RUNNING"
+            pid = int(open(pid_file).read().strip())
+            if _pid_alive(pid):
+                return "ALREADY_RUNNING"
+        except:
+            pass
+
+    venv_python = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "Scripts", "python.exe")
+    if not os.path.exists(venv_python):
+        import sys
+        venv_python = sys.executable
+
+    try:
+        proc = subprocess.Popen(
+            [venv_python, "bot_listener.py"],
+            creationflags=0x08000000,
+            cwd=os.path.dirname(os.path.abspath(__file__))
+        )
+        with open(pid_file, "w") as pf:
+            pf.write(str(proc.pid))
+        return "STARTED"
+    except Exception as e:
+        return f"ERROR: {e}"
 
 bot_status = initialize_interactive_bot()
 
@@ -484,12 +534,36 @@ st.write(f"⏱️ **آخر تحديث للرادار:** `{now_est.strftime('%H:%
 if "active_scan_session" not in st.session_state:
     st.session_state["active_scan_session"] = None
 
+# 3.5 شاشة التنبيهات الفورية المرسلة إلى تيليجرام (تزامن 100% بين المنصة والبوت)
+st.markdown("### 📡 أحدث التنبيهات المرسلة فوريًا إلى تيليجرام (Telegram Live Feed)")
+tg_alerts = db.get_alerts_history(limit=15)
+if tg_alerts:
+    df_tg_display = pd.DataFrame([
+        {
+            "ساعة التنبيه": row["sent_at"].split("T")[-1][:8] if "T" in str(row["sent_at"]) else str(row["sent_at"]),
+            "رمز السهم": row["symbol"],
+            "سعر الدخول": f"${row['price']:.4f}",
+            "الارتفاع عند التنبيه": f"+{row['initial_change']:.1f}%" if row['initial_change'] > 0 else f"{row['initial_change']:.1f}%",
+            "درجة القناعة": f"{row['score']:.0f}%",
+            "نوع التوصية": row["alert_type"],
+            "أعلى سعر تم بلوغه": f"${row['max_price_reached']:.4f}",
+            "حالة الصفقة": "🟢 نجحت (+12% فأكثر)" if row["status"] == "SUCCESS" else ("🔴 فشلت (-5% stop loss)" if row["status"] == "FAILED" else ("🟡 جزئية (+10%)" if row["status"] == "PARTIAL" else "⏳ قيد التتبع والانتظار"))
+        }
+        for row in tg_alerts
+    ])
+    st.markdown(render_premium_table(df_tg_display), unsafe_allow_html=True)
+else:
+    st.info("ℹ️ لم يتم إرسال أي تنبيهات جديدة إلى تيليجرام في الجلسة الحالية حتى الآن. ستظهر التنبيهات هنا فور صدورها تلقائياً.")
+
+st.markdown("---")
+
 # 4. علامات التبويب الموزعة للفترات
-t_halts, t1, t2, t3, t4, t5, t6, t7 = st.tabs([
+t_halts, t1, t2, t3, t_trace, t4, t5, t6, t7 = st.tabs([
     "🚨 صفقات الاستئناف (LULD Halts)",
     "🛰️ جلسة ما قبل السوق", 
     "📊 الجلسة الرسمية للسوق", 
     "🌙 جلسة بعد الإغلاق", 
+    "🔍 سجل الاستبعاد والقرارات (Decision Trace)",
     "📡 رادار الأخبار الفورية (SEC)",
     "🏆 سجل صيد اليقين التراكمي",
     "📊 محرك الاختبار التاريخي",
@@ -666,6 +740,9 @@ def run_session_pipeline(session_name):
             active_halts = get_active_halts()
             
             # تصفية وفرز البيانات
+            from decision_engine import DecisionEngine
+            engine = DecisionEngine()
+            
             opportunities = []
             for quote in raw_data:
                 try:
@@ -673,50 +750,16 @@ def run_session_pipeline(session_name):
                     if not sym:
                         continue
                         
-                    # استبعاد شذوذ التقسيم وأسهم SPACs والخيارات والوحدات الوهمية (أطول من 4 أحرف أو تنتهي بـ U, W, R)
-                    if len(sym) > 4 or sym.endswith(("U", "W", "R")):
-                        continue
-
-                    # حساب يدوي لسعر وتغير الجلسة لتجنب خلل كسور ياهو
-                    price = _safe_float(quote.get("regularMarketPrice"), 0.0)
-                    prev_close = _safe_float(quote.get("regularMarketPreviousClose"), price)
-                    change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else 0.0
-                    
-                    if session_name == "PRE_MARKET" and quote.get("preMarketPrice") is not None:
-                        price = _safe_float(quote.get("preMarketPrice"), price)
-                        change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else change
-                    elif session_name == "AFTER_HOURS" and quote.get("postMarketPrice") is not None:
-                        price = _safe_float(quote.get("postMarketPrice"), price)
-                        change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else change
-
-                    if price <= 0.0 or price > 20.0 or change < 5.0 or change > 100.0:
-                        continue
-                        
-                    # تصفية إضافية لمنع عرض الأسهم الخاملة التي لا تتداول في الجلسات الممتدة
-                    if session_name == "PRE_MARKET":
-                        pre_chg = quote.get("preMarketChangePercent")
-                        if pre_chg is None or float(pre_chg) == 0.0:
-                            continue
-                    elif session_name == "AFTER_HOURS":
-                        post_chg = quote.get("postMarketChangePercent")
-                        if post_chg is None or float(post_chg) == 0.0:
-                            continue
-
-                    # جلب المحفزات الأخبارية من الـ SEC لدعم فك قيود الفجوة
+                    # Fetch news catalyst (SEC Form 4 or 8-K)
                     sec_sentiment = get_sec_filings_sentiment(sym)
                     has_catalyst = bool(sec_sentiment.get("insider_buy") or sec_sentiment.get("material_news"))
-
+                    
                     anomaly_info = anomaly_map.get(sym, {"is_anomaly": False, "confidence_score": 1.0})
                     
                     is_yahoo = sym in yahoo_trending
                     is_reddit = sym in reddit_trending
                     is_trending = is_yahoo or is_reddit
                     
-                    score, details, price, change, rvol = intel.calculate_7_layer_conviction(
-                        quote, session_name, anomaly_info, sec_sentiment=sec_sentiment, is_trending=is_trending
-                    )
-                    
-                    # حساب احتمالية الانفجار عبر نموذج التعلم الآلي المطور بـ 8 ميزات (مع الفلوت والبيع المكشوف)
                     f_info = hist_features.get(sym, {
                         "volatility_10d": 5.0, 
                         "prev_rvol": 1.0, 
@@ -726,16 +769,40 @@ def run_session_pipeline(session_name):
                         "squeeze_score": 0
                     })
                     
-                    ml_prob = ml_classifier.predict_probability(
-                        price=price,
-                        change=change,
-                        rvol=rvol,
-                        volatility_10d=f_info["volatility_10d"],
-                        prev_rvol=f_info["prev_rvol"],
-                        prev_change=f_info["prev_change"],
-                        float_shares_m=f_info["float_shares_m"],
-                        short_percent=f_info["short_percent"]
+                    # 1. تقييم السهم عبر محرك القرار المركزي
+                    trace = engine.evaluate_symbol(
+                        quote=quote,
+                        session=session_name,
+                        anomaly_info=anomaly_info,
+                        sec_sentiment=sec_sentiment,
+                        is_trending=is_trending,
+                        f_info=f_info
                     )
+                    
+                    # 2. تسجيل القرار كاملاً في قاعدة البيانات لضمان الشفافية
+                    from database import QuantDatabase
+                    db_trace = QuantDatabase()
+                    db_trace.log_evaluation_trace(
+                        symbol=sym,
+                        price=trace["price"],
+                        change=trace["change"],
+                        rvol=trace["rvol"],
+                        score=trace["score"],
+                        ml_prob=trace["ml_prob"],
+                        status=trace["status"],
+                        reason=trace["rejection_reason"],
+                        details=trace["details"]
+                    )
+                    
+                    # 3. عرض الأسهم المقبولة فقط في الجداول الرئيسية
+                    if trace["status"] != "ACCEPTED":
+                        continue
+                        
+                    price = trace["price"]
+                    change = trace["change"]
+                    rvol = trace["rvol"]
+                    score = trace["score"]
+                    ml_prob = trace["ml_prob"]
                     
                     # التحقق من حالة الإيقاف
                     is_halted = sym in active_halts
@@ -743,23 +810,6 @@ def run_session_pipeline(session_name):
                     
                     sec_tags = ", ".join(sec_sentiment["details"]) if sec_sentiment["details"] else "لا يوجد"
                     is_dilution = sec_sentiment["dilution_warning"]
-                    
-                    # 1. تعديل النقاط بناءً على ملكية الملاك (Form 4) +15%
-                    if sec_sentiment.get("insider_buy"):
-                        score = min(100, score + 15)
-                        
-                    # 2. تعديل النقاط بناءً على الأحداث الجوهرية (Form 8-K) +10%
-                    if sec_sentiment.get("material_news"):
-                        score = min(100, score + 10)
-                        
-                    # 3. عقوبة تخفيف الأسهم (Form S-1) تخصم 70% لمنع تداول السهم
-                    if is_dilution:
-                        score = max(0, score - 70)
-                            
-                    # 4. تعديل النقاط بناءً على زخم التداول الاجتماعي والبحث +10%
-                    # نمنح الزخم الاجتماعي القوة فقط إذا كانت المؤشرات الفنية مستقرة أصلاً (score >= 70) لمنع الـ FOMO والتلاعب
-                    if is_trending and score >= 70:
-                        score = min(100, score + 10)
                     
                     # تحديد نصوص الشهرة والبحث والتوجيه
                     popularity_lbl = "➖ طبيعي"
@@ -796,7 +846,7 @@ def run_session_pipeline(session_name):
                         "Days_To_Cover": f_info.get("days_to_cover", 0.0),
                         "Squeeze_Score": f_info.get("squeeze_score", 0),
                         "Has_Catalyst": has_catalyst,
-                        "Matches": details,
+                        "Matches": trace["details"],
                         "Popularity": popularity_lbl,
                         "Action_Directive": action_lbl
                     })
@@ -1102,6 +1152,46 @@ with t3:
         run_session_pipeline("AFTER_HOURS")
     else:
         st.info("💡 اضغط على زر 'تشغيل الفحص التلقائي المستمر' لمراقبة جلسة الليل بشكل مستمر دون اختفاء البيانات عند تحديث الصفحة.")
+
+with t_trace:
+    st.markdown("### 🔍 سجل تتبع القرارات والاستبعاد التفصيلي (Decision & Exclusion Trace)")
+    st.write("يعرض هذا السجل كافة الرموز والأسهم التي خضعت لتقييم المنصة وسبب القبول أو الرفض التفصيلي لكل سهم لضمان الشفافية بنسبة 100%.")
+    
+    from database import QuantDatabase
+    db_eval = QuantDatabase()
+    
+    col1, col2 = st.columns([2, 4])
+    with col1:
+        trace_limit = st.slider("عدد السجلات المعروضة:", min_value=10, max_value=200, value=50, step=10)
+    with col2:
+        status_filter = st.radio("تصفية حسب الحالة:", ["الكل (All)", "المستبعدة فقط (REJECTED)", "المقبولة فقط (ACCEPTED)"], horizontal=True)
+
+    evals = db_eval.get_recent_evaluations(limit=trace_limit)
+    if evals:
+        # Filter evaluations
+        if "المستبعدة فقط" in status_filter:
+            evals = [e for e in evals if e["status"] == "REJECTED"]
+        elif "المقبولة فقط" in status_filter:
+            evals = [e for e in evals if e["status"] == "ACCEPTED"]
+            
+        if evals:
+            df_evals = pd.DataFrame(evals)
+            
+            # Format datetime
+            df_evals["evaluated_at"] = pd.to_datetime(df_evals["evaluated_at"]).dt.strftime("%Y-%m-%d %H:%M:%S")
+            
+            # Translate status labels
+            df_evals["حالة القرار"] = df_evals["status"].apply(lambda s: "🟢 مقبول" if s == "ACCEPTED" else "🔴 مستبعد")
+            
+            # Select columns to display
+            df_display = df_evals[["evaluated_at", "symbol", "price", "change", "rvol", "score", "ml_prob", "حالة القرار", "rejection_reason"]].copy()
+            df_display.columns = ["توقيت الفحص", "رمز السهم", "السعر", "التغير اليومي", "الحجم النسبي RVOL", "درجة القناعة", "احتمالية ML", "الحالة", "سبب القرار / الاستبعاد"]
+            
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
+        else:
+            st.info("⏳ لا توجد سجلات مطابقة للتصفية الحالية.")
+    else:
+        st.info("⏳ لا توجد سجلات فحص وتتبع في قاعدة البيانات حالياً.")
 
 with t4:
     st.markdown("### 📡 رادار الأخبار الفورية (SEC Edgar RSS)")

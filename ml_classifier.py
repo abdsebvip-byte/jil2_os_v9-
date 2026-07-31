@@ -23,7 +23,7 @@ class QuantMLClassifier:
             try:
                 with open(MODEL_PATH, "rb") as f:
                     self.model = pickle.load(f)
-                print("QuantMLClassifier: XGBoost Model loaded successfully.")
+                # Model loaded silently
                 return
             except Exception as e:
                 print(f"QuantMLClassifier: Failed to load XGBoost model: {e}. Retraining...")
