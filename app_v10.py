@@ -480,6 +480,10 @@ est_tz = pytz.timezone('US/Eastern')
 now_est = datetime.now(est_tz)
 st.write(f"⏱️ **آخر تحديث للرادار:** `{now_est.strftime('%H:%M:%S')} EST` | **تأخير البيانات:** `0 ثوانٍ (بيانات لحظية 🟢)`")
 
+# تهيئة حالة الجلسة النشطة للحفاظ على الفحص عبر التحديث التلقائي
+if "active_scan_session" not in st.session_state:
+    st.session_state["active_scan_session"] = None
+
 # 4. علامات التبويب الموزعة للفترات
 t_halts, t1, t2, t3, t4, t5, t6, t7 = st.tabs([
     "🚨 صفقات الاستئناف (LULD Halts)",
@@ -1039,20 +1043,65 @@ def run_session_pipeline(session_name):
 with t1:
     st.markdown("### 🛰️ جلسة ما قبل الافتتاح (Pre-Market Scanner)")
     st.write("تركز هذه الجلسة على قياس فجوات الافتتاح وأحجام التداول وشذوذ السيولة قبل انطلاق السوق.")
-    if st.button("تفعيل فحص ما قبل السوق"):
+    
+    col1, col2 = st.columns([1.5, 3.5])
+    with col1:
+        if st.button("⚡ تشغيل الفحص التلقائي المستمر", key="btn_pre_market"):
+            st.session_state["active_scan_session"] = "PRE_MARKET"
+            st.rerun()
+    with col2:
+        if st.session_state.get("active_scan_session") == "PRE_MARKET":
+            st.success("🟢 الفحص التلقائي المستمر نشط حالياً ويعمل تلقائياً مع تحديث الصفحة.")
+            if st.button("🛑 إيقاف الفحص التلقائي", key="stop_pre_market"):
+                st.session_state["active_scan_session"] = None
+                st.rerun()
+                
+    if st.session_state.get("active_scan_session") == "PRE_MARKET":
         run_session_pipeline("PRE_MARKET")
+    else:
+        st.info("💡 اضغط على زر 'تشغيل الفحص التلقائي المستمر' لمراقبة أسهم ما قبل السوق بشكل مستمر دون اختفاء البيانات عند تحديث الصفحة.")
 
 with t2:
     st.markdown("### 📊 الجلسة الرسمية للسوق (Regular Session Scanner)")
     st.write("تركز الجلسة الرسمية على تسارع السيولة اللحظي واختراق القمم ومؤشرات شذوذ الحجم اللحظية.")
-    if st.button("تفعيل فحص الجلسة الرسمية"):
+    
+    col1, col2 = st.columns([1.5, 3.5])
+    with col1:
+        if st.button("⚡ تشغيل الفحص التلقائي المستمر", key="btn_reg_market"):
+            st.session_state["active_scan_session"] = "REGULAR_SESSION"
+            st.rerun()
+    with col2:
+        if st.session_state.get("active_scan_session") == "REGULAR_SESSION":
+            st.success("🟢 الفحص التلقائي المستمر نشط حالياً ويعمل تلقائياً مع تحديث الصفحة.")
+            if st.button("🛑 إيقاف الفحص التلقائي", key="stop_reg_market"):
+                st.session_state["active_scan_session"] = None
+                st.rerun()
+                
+    if st.session_state.get("active_scan_session") == "REGULAR_SESSION":
         run_session_pipeline("REGULAR_SESSION")
+    else:
+        st.info("💡 اضغط على زر 'تشغيل الفحص التلقائي المستمر' لمراقبة الجلسة الرسمية بشكل مستمر دون اختفاء البيانات عند تحديث الصفحة.")
 
 with t3:
     st.markdown("### 🌙 جلسة بعد الإغلاق (After-Hours Scanner)")
     st.write("تتبع هذه الجلسة استجابات الشركات للنتائج والأخبار وتأثيراتها الحركية بعد جرس الإغلاق.")
-    if st.button("تفعيل فحص جلسة الليل"):
+    
+    col1, col2 = st.columns([1.5, 3.5])
+    with col1:
+        if st.button("⚡ تشغيل الفحص التلقائي المستمر", key="btn_after_hours"):
+            st.session_state["active_scan_session"] = "AFTER_HOURS"
+            st.rerun()
+    with col2:
+        if st.session_state.get("active_scan_session") == "AFTER_HOURS":
+            st.success("🟢 الفحص التلقائي المستمر نشط حالياً ويعمل تلقائياً مع تحديث الصفحة.")
+            if st.button("🛑 إيقاف الفحص التلقائي", key="stop_after_hours"):
+                st.session_state["active_scan_session"] = None
+                st.rerun()
+                
+    if st.session_state.get("active_scan_session") == "AFTER_HOURS":
         run_session_pipeline("AFTER_HOURS")
+    else:
+        st.info("💡 اضغط على زر 'تشغيل الفحص التلقائي المستمر' لمراقبة جلسة الليل بشكل مستمر دون اختفاء البيانات عند تحديث الصفحة.")
 
 with t4:
     st.markdown("### 📡 رادار الأخبار الفورية (SEC Edgar RSS)")
