@@ -374,6 +374,26 @@ class QuantDatabase:
             """, (symbol, datetime.now().isoformat(), float(price), float(score), str(alert_type), str(session), float(target_percent), float(price), str(status), float(initial_change)))
             conn.commit()
 
+    def check_alert_sent_recently(self, symbol, hours=3):
+        """
+        Check if an alert for this symbol was sent to Telegram within the last N hours.
+        Returns True if sent recently, False otherwise.
+        """
+        try:
+            symbol = symbol.upper().strip()
+            from datetime import timedelta
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
+                cursor.execute(
+                    "SELECT COUNT(*) FROM alerts_history WHERE symbol = ? AND sent_at >= ?",
+                    (symbol, cutoff)
+                )
+                count = cursor.fetchone()[0]
+                return count > 0
+        except Exception as e:
+            return False
+
     def get_alerts_history(self, limit=50):
         with self.get_connection() as conn:
             cursor = conn.cursor()
