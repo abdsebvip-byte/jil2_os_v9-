@@ -196,13 +196,9 @@ class QuantIntelligence:
         # Catalyst-Adjusted Gap and Fomo Limits
         gap_limit = thresholds["gap"]
         fomo_limit = thresholds["fomo"]
-        # في الجلسات الممتدة، الارتفاعات الكبيرة طبيعية — لا نعاقبها
-        if is_extended:
-            fomo_limit = 300.0  # لا حد للارتفاع في الجلسات الممتدة
-            gap_limit = 100.0
         if isinstance(sec_sentiment, dict) and (sec_sentiment.get("insider_buy") or sec_sentiment.get("material_news")):
-            gap_limit = max(gap_limit, 75.0)
-            fomo_limit = max(fomo_limit, 100.0)
+            gap_limit = max(gap_limit, 45.0)
+            fomo_limit = max(fomo_limit, 75.0)
 
         gap = ((open_price - prev_close) / prev_close) * 100.0 if prev_close > 0 else 0.0
         if abs(gap) <= gap_limit:
@@ -214,15 +210,14 @@ class QuantIntelligence:
         if 5.0 <= price_change <= 15.0:
             score += 20
             details["Early_Breakout"] = "IDEAL"
-        elif 15.0 < price_change <= 55.0:
+        elif 15.0 < price_change <= 30.0:
             score += 10
             details["Early_Breakout"] = "HIGH"
-        elif 55.0 < price_change <= fomo_limit:
-            # في الجلسات الممتدة: ارتفاع قوي يعني محفز حقيقي
-            score += 5 if is_extended else -10
-            details["Early_Breakout"] = "STRONG_EXTENDED" if is_extended else "FOMO_BLOCKED"
+        elif 30.0 < price_change <= fomo_limit:
+            score -= 15  # عقوبة للتضخم السعري وفوات منطقة الشراء الآمنة
+            details["Early_Breakout"] = "EXTENDED_RISK"
         elif price_change > fomo_limit:
-            score -= 10
+            score -= 30  # عقوبة قاسية لمنع الـ FOMO بالكامل
             details["Early_Breakout"] = "FOMO_BLOCKED"
         else:
             details["Early_Breakout"] = "LOW_CHANGE"
@@ -327,6 +322,11 @@ class QuantIntelligence:
         # 1. Halts execution
         if is_halted:
             return "⏳ أمر دخول محدد (Limit Order) قريباً من السعر المقترح عند استئناف التداول لتجنب الانزلاق السعري الفجائي."
+            
+        # 1.5 Safe entry zone validation
+        price, change, prev_close = self._session_price_change(quote, session) if quote else (0.0, 0.0, 0.0)
+        if change > 30.0:
+            return f"⚠️ مراقبة فقط (تجاوز منطقة الشراء الآمنة) - السهم ارتفع بنسبة كبيرة (+{change:.1f}%) والدخول الفوري ينطوي على مخاطرة تراجع عالية (FOMO)."
             
         # 2. Super-Nova Execution (Low-Float + High Conviction)
         if float_shares < 2000000.0 and score >= 80:

@@ -92,6 +92,8 @@ def update_pending_signals_status(db):
 def get_direct_action(r):
     if r.get("Is_Dilution"):
         return "🔴 تجنب (🚨 خطر تخفيف)"
+    if r.get("Change_%", 0.0) > 30.0:
+        return f"⚠️ مراقبة (تجاوز الشراء الآمن +{r.get('Change_%', 0.0):.1f}%)"
     if r.get("Change_%", 0.0) > 100.0:
         return "🔴 تجنب (🚨 صعود فجوة تضخم)"
     score = r.get("Conviction_Score", 0)

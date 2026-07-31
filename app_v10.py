@@ -615,6 +615,8 @@ with t_halts:
 def get_direct_action(r):
     if r["Is_Dilution"]:
         return "🔴 تجنب (🚨 خطر تخفيف)"
+    if r["Change_%"] > 30.0:
+        return f"⚠️ مراقبة (تجاوز الشراء الآمن +{r['Change_%']:.1f}%)"
     if r["Change_%"] > 100.0:
         return "🔴 تجنب (🚨 صعود فجوة تضخم)"
     score = r["Conviction_Score"]
