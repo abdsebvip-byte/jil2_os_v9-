@@ -811,8 +811,18 @@ def run_session_pipeline(session_name):
         
         if not df_anomalies.empty:
             st.write("📈 **قائمة الأسهم التي تشهد تجميعاً ونشاطاً استثنائياً حالياً:**")
-            df_anom_display = df_anomalies[["Symbol", "Price", "Change_%", "Volume", "RVOL", "Confidence_Score"]].copy()
-            df_anom_display.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم اليومي", "الحجم النسبي RVOL", "مؤشر ثقة الاختراق (0-10)"]
+            cols_anom = ["Symbol", "Price", "Change_%", "Volume", "RVOL", "Confidence_Score"]
+            exist_anom = [c for c in cols_anom if c in df_anomalies.columns]
+            df_anom_display = df_anomalies[exist_anom].copy()
+            col_anom_map = {
+                "Symbol": "رمز السهم",
+                "Price": "السعر اللحظي",
+                "Change_%": "التغير المئوي",
+                "Volume": "الحجم اليومي",
+                "RVOL": "الحجم النسبي RVOL",
+                "Confidence_Score": "مؤشر ثقة الاختراق (0-10)"
+            }
+            df_anom_display.rename(columns=col_anom_map, inplace=True)
             st.markdown(render_premium_table(df_anom_display), unsafe_allow_html=True)
         
         top_stock = df_opportunities.iloc[0]
@@ -831,13 +841,29 @@ def run_session_pipeline(session_name):
         st.write("---")
         st.markdown("### 💥 صفقات الانفجار المعتمدة (High-Conviction Explosive Plays)")
         df_exp_display = df_opportunities.copy()
+        if "Popularity" not in df_exp_display.columns:
+            df_exp_display["Popularity"] = "➖ طبيعي"
         df_exp_display["التوجيه المباشر"] = df_exp_display.apply(get_direct_action, axis=1)
         df_exp_display["تطابق الخوارزمية"] = df_exp_display["Conviction_Score"].apply(lambda x: f"🔥 {x}%")
         df_exp_display["احتمالية الانفجار (ML)"] = df_exp_display["ML_Probability"].apply(format_ml_prob)
         df_exp_display["حالة الإيقاف"] = df_exp_display.apply(lambda r: f"🚨 موقوف ({r['Halt_Reason']})" if r["Is_Halted"] else "🟢 نشط", axis=1)
         
-        df_exp_table = df_exp_display[["Symbol", "Price", "Change_%", "RVOL", "حالة الإيقاف", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "Popularity", "Action_Directive"]].copy()
-        df_exp_table.columns = ["رمز السهم", "السعر اللحظي", "التغير المئوي", "الحجم النسبي RVOL", "حالة التداول", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "الشهرة والبحث", "توجيه الشراء"]
+        cols_to_show = ["Symbol", "Price", "Change_%", "RVOL", "حالة الإيقاف", "احتمالية الانفجار (ML)", "تطابق الخوارزمية", "Popularity", "التوجيه المباشر"]
+        existing_cols = [c for c in cols_to_show if c in df_exp_display.columns]
+        df_exp_table = df_exp_display[existing_cols].copy()
+        
+        col_name_map = {
+            "Symbol": "رمز السهم",
+            "Price": "السعر اللحظي",
+            "Change_%": "التغير المئوي",
+            "RVOL": "الحجم النسبي RVOL",
+            "حالة الإيقاف": "حالة التداول",
+            "احتمالية الانفجار (ML)": "احتمالية الانفجار (ML)",
+            "تطابق الخوارزمية": "تطابق الخوارزمية",
+            "Popularity": "الشهرة والبحث",
+            "التوجيه المباشر": "توجيه الشراء"
+        }
+        df_exp_table.rename(columns=col_name_map, inplace=True)
         st.markdown(render_premium_table(df_exp_table), unsafe_allow_html=True)
     else:
         st.info("ℹ️ المحرك يعمل بالخلفية ويرسل التنبيهات فوراً لتيليجرام. لا توجد فرص مكتملة الشروط في هذه اللحظة.")
