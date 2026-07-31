@@ -5,9 +5,12 @@ import yfinance as yf
 import logging
 import time as _time
 
-# كاش بسيط لنتائج SEC بمدة 5 دقائق لتجنب طلبات مكررة خلال دورة المسح الواحدة
+# كاش بسيط لنتائج SEC بمدة 15 دقيقة لتجنب طلبات مكررة خلال دورة المسح الواحدة
 _SEC_CACHE: dict = {}
-_SEC_CACHE_TTL = 300  # ثواني (5 دقائق)
+_SEC_CACHE_TTL = 900  # ثواني (15 دقيقة)
+
+# إسكات تنبيهات yfinance الخاصة بالأخبار لتنظيف السجلات
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 def get_active_halts():
     """

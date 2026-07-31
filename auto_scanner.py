@@ -385,8 +385,12 @@ def start_scheduler():
                             price = _safe_float(quote.get("postMarketPrice"), price)
                             change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else change
 
-                        # Fetch news catalyst (SEC Form 4 or 8-K)
-                        sec_sentiment = get_sec_filings_sentiment(sym)
+                        # Fetch news catalyst (SEC Form 4 or 8-K) only for active candidates to avoid rate limits
+                        vol_val = _safe_float(quote.get("regularMarketVolume"), 0.0)
+                        if abs(change) >= 1.0 or vol_val >= 50000.0:
+                            sec_sentiment = get_sec_filings_sentiment(sym)
+                        else:
+                            sec_sentiment = {"insider_buy": False, "material_news": False, "dilution_warning": False, "details": []}
                         anomaly_info = anomaly_map.get(sym, {"is_anomaly": False, "confidence_score": 1.0})
                         
                         is_yahoo = sym in yahoo_trending
