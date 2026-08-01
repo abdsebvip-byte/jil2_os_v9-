@@ -382,7 +382,15 @@ class QuantIntelligence:
         Return the dynamic predictive expected yield tier based on Float, FTAI, Squeeze, and Conviction.
         Returns tuple: (tier_code, tier_label, tier_color, target_range_str)
         """
-        details = details or {}
+        if isinstance(details, str):
+            try:
+                import json
+                details = json.loads(details)
+            except Exception:
+                details = {}
+        elif not isinstance(details, dict):
+            details = {}
+
         float_shares = self._safe_float(
             quote.get("float_shares_outstanding") or quote.get("floatShares") if quote else None,
             15000000.0
