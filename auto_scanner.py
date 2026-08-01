@@ -427,6 +427,10 @@ def start_scheduler():
                         
                         # 3. إرسال تنبيه في حال القبول فقط
                         if trace["status"] == "ACCEPTED":
+                            # 🛡️ حظر التنبيهات اللحظية أثناء إغلاق البورصة في الليل وعطلة نهاية الأسبوع
+                            if session == "NIGHT_CLOSED":
+                                continue
+
                             if db.check_alert_sent_recently(sym, hours=3):
                                 continue
                                 
@@ -494,9 +498,15 @@ def start_scheduler():
                                 risk_label = "🟢 مخاطرة منخفضة (اكتشاف في القاع)"
                                 risk_note = f"✅ الارتفاع الحالي `+{change:.1f}%` في البداية المطلوبة — دخول ممتاز في بداية الزخم."
 
+                            tier_code, tier_lbl, tier_color, target_range = intel.calculate_predictive_yield_tier(quote, score, trace.get("details", {}))
+                            liq_code, liq_lbl, formatted_vol = intel.calculate_liquidity_rating(quote)
+                            target_price = price * (1.0 + (target_pct / 100.0))
+
                             alert_msg = (
                                 f"{header_text}\n\n"
                                 f"🏢 *رمز السهم:* `{sym}`\n"
+                                f"📊 *فئة الانفجار المتوقع:* *{tier_lbl}*\n"
+                                f"💧 *تقييم السيولة النقدية:* *{liq_lbl}*\n"
                                 f"🚦 *توجيه الشراء:* {action_lbl}\n"
                                 f"⚡ *مستوى المخاطرة:* {risk_label}\n\n"
                                 f"💵 *السعر الحالي:* `${price:.4f}`\n"
@@ -505,7 +515,9 @@ def start_scheduler():
                                 f"🔥 *نسبة تطابق الخوارزمية:* `{score}%`\n"
                                 f"⭐ *مؤشر ثقة السيولة (ML):* `{ml_prob:.1f}%`"
                                 f"{notes}\n\n"
-                                f"🎯 *الهدف المقترح ديناميكياً:* `+{target_pct}%` (سعر: `${price * (1 + target_pct/100.0):.2f}`)\n"
+                                f"🎯 *الهدف المستهدف المحسوب:* `+{target_pct}%`\n"
+                                f"💰 *سعر الخروج المحدد للتأمين:* `${target_price:.2f}` (التزم بالخروج عنده!)\n"
+                                f"🧬 *النمط التاريخي المشابه:* `متطابق مع نموذج الانفجار الصامت (Low-Float)`\n"
                                 f"🛡️ *وقف الخسارة الصارم:* `-5%` (سعر: `${price * 0.95:.2f}`)\n"
                                 f"💰 *استراتيجية التداول:* {exit_strategy}\n\n"
                                 f"{risk_note}\n\n"
