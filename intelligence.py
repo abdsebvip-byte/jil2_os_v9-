@@ -377,6 +377,52 @@ class QuantIntelligence:
         else:
             return f"🎯 استراتيجية التأمين: ضع أمر بيع محدد (Take Profit) لكامل الكمية عند السعر المستهدف (+{target_pct}%)."
 
+    def calculate_predictive_yield_tier(self, quote, score, details=None):
+        """
+        Return the dynamic predictive expected yield tier based on Float, FTAI, Squeeze, and Conviction.
+        Returns tuple: (tier_code, tier_label, tier_color, target_range_str)
+        """
+        details = details or {}
+        float_shares = self._safe_float(
+            quote.get("float_shares_outstanding") or quote.get("floatShares") if quote else None,
+            15000000.0
+        )
+        ftai = self._safe_float(details.get("FTAI_Score"), 0.0)
+        is_squeeze = bool(details.get("Volatility_Squeeze_Coil"))
+        is_ftai_early = bool(details.get("Supernova_FTAI_Early"))
+
+        # 🚀 1. فئة الانفجار الخارق (+80% إلى +100%+)
+        if (float_shares < 5000000.0 and (is_ftai_early or is_squeeze or ftai >= 0.8) and score >= 75) or (float_shares < 3000000.0 and score >= 85):
+            return "TIER_1_SUPERNOVA", "🚀 فئة الانفجار الخارق المتوقع (+80% إلى +100%+)", "#00FFCC", "+80% إلى +120%"
+
+        # 💥 2. فئة الصعود العالي (+40% إلى +75%)
+        if (float_shares < 15000000.0 and score >= 75) or (score >= 85):
+            return "TIER_2_HIGH_YIELD", "💥 فئة الصعود العالي المتوقع (+40% إلى +75%)", "#FFA500", "+40% إلى +75%"
+
+        # 📈 3. فئة الزخم اللحظي السريع (+15% إلى +35%)
+        return "TIER_3_MOMENTUM", "📈 فئة الزخم اللحظي السريع (+15% إلى +35%)", "#3B82F6", "+15% إلى +35%"
+
+    def calculate_liquidity_rating(self, quote):
+        """
+        Return the dollar-volume liquidity rating indicator.
+        Returns tuple: (liq_code, liq_label, dollar_vol_formatted)
+        """
+        if not isinstance(quote, dict):
+            return "LIQ_MEDIUM", "💧 سيولة نقدية متوسطة", "$1.0M"
+
+        price = self._safe_float(quote.get("regularMarketPrice"), 0.0)
+        volume = self._safe_float(quote.get("regularMarketVolume"), 0.0)
+        dollar_vol = price * volume
+
+        formatted_vol = f"${dollar_vol/1000000.0:.2f}M" if dollar_vol >= 1000000.0 else f"${dollar_vol/1000.0:.0f}K"
+
+        if dollar_vol >= 5000000.0:
+            return "LIQ_HEAVY", f"🌊 سيولة نقدية ضخمة ({formatted_vol}) 🟢", formatted_vol
+        elif dollar_vol >= 1000000.0:
+            return "LIQ_MEDIUM", f"💧 سيولة نقدية متوسطة ({formatted_vol}) 🟡", formatted_vol
+        else:
+            return "LIQ_THIN", f"⚠️ سيولة خفيفة ({formatted_vol}) 🔴 (يفضل الدخول بمبلغ صغير)", formatted_vol
+
     def calculate_dynamic_stop_loss(self, rvol, max_loss=5.0):
         """
         Keep loss protection strict; tighten to -4% when volume confirmation is weak.

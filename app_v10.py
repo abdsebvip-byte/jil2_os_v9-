@@ -827,14 +827,20 @@ def run_session_pipeline(session_name):
         
         top_stock = df_opportunities.iloc[0]
         matches = top_stock["Matches"]
+        top_quote = {"regularMarketPrice": top_stock['Price'], "regularMarketVolume": top_stock['Volume'], "float_shares_outstanding": top_stock['Float_M'] * 1000000.0}
+        tier_code, tier_lbl, tier_color, target_range = intel.calculate_predictive_yield_tier(top_quote, top_stock['Conviction_Score'], matches)
+        liq_code, liq_lbl, formatted_vol = intel.calculate_liquidity_rating(top_quote)
+
         target_pct_card = intel.calculate_dynamic_target(top_stock['Conviction_Score'], top_stock['Confidence_Score'] * 10.0)
         st.markdown(f"""
         <div class="signal-card">
             <h2 style='color:#10b981; margin:0 0 10px 0; font-size:22px; font-weight:700;'>🎯 التوجيه التنفيذي للمركز الأول (أقوى تطابق كمي)</h2>
             <h3>🔥 رمز السهم: {top_stock['Symbol']} | نسبة تطابق الخوارزمية: {top_stock['Conviction_Score']}%</h3>
             <p style='font-size:18px;margin:5px 0;'>السعر الحالي: <b>{top_stock['Price']:.4f} $</b> | التغير اليومي: <b>{top_stock['Change_%']:+.2f}%</b> | تسارع الحجم النسبي: <b>{top_stock['RVOL']:.2f}x</b></p>
+            <p style='font-size:17px;color:{tier_color};margin:5px 0;'><b>{tier_lbl}</b></p>
+            <p style='font-size:16px;color:#94A3B8;margin:5px 0;'><b>{liq_lbl}</b></p>
             <h3 style="color:#00FFCC !important; margin: 5px 0;">🎯 القرار المقترح: {get_direct_action(top_stock)}</h3>
-            <p style='font-size:16px; margin:5px 0; color:#FFA500;'>💰 <b>الهدف المقترح:</b> +{target_pct_card}% (سعر: ${top_stock['Price'] * (1 + target_pct_card/100.0):.2f}) | 🛡️ <b>وقف الخسارة:</b> -5% (سعر: ${top_stock['Price'] * 0.95:.2f})</p>
+            <p style='font-size:16px; margin:5px 0; color:#FFA500;'>💰 <b>الهدف المقترح:</b> +{target_pct_card}% (نطاق الهدف: {target_range}) | 🛡️ <b>وقف الخسارة:</b> -5% (سعر: ${top_stock['Price'] * 0.95:.2f})</p>
         </div>
         """, unsafe_allow_html=True)
         

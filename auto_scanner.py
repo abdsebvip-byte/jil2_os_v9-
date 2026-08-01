@@ -281,9 +281,14 @@ def start_scheduler():
                                 risk_label = "🟢 مخاطرة منخفضة نسبياً"
                                 risk_note = f"✅ ارتفاع `+{change:.1f}%` ضمن نطاق الاكتشاف المبكر."
 
+                            tier_code, tier_lbl, tier_color, target_range = intel.calculate_predictive_yield_tier(price_data, score, trace.get("details", ""))
+                            liq_code, liq_lbl, formatted_vol = intel.calculate_liquidity_rating(price_data)
+
                             alert_text = (
                                 f"🎯 *توصية صفقة استئناف موصى بها!* 🎯\n\n"
                                 f"🏢 *رمز السهم:* `{sym}`\n"
+                                f"📊 *فئة الانفجار المتوقع:* *{tier_lbl}*\n"
+                                f"💧 *تقييم السيولة النقدية:* *{liq_lbl}*\n"
                                 f"🚦 *توجيه الشراء:* {action_lbl}\n"
                                 f"⚡ *مستوى المخاطرة:* {risk_label}\n\n"
                                 f"📈 *نوع الإيقاف:* `صعود حاد مفاجئ` ({reason})\n"
