@@ -445,6 +445,54 @@ class QuantDatabase:
             """, (float(max_price), str(status), int(alert_id)))
             conn.commit()
 
+    def evaluate_historical_alert_outcomes(self):
+        """
+        Automatic Outcome Feedback Loop:
+        Inspects pending alerts, checks historical max price via YahooQuery,
+        updates alert status ('SUCCESS' or 'FAILED') and records true training labels.
+        """
+        pending = self.get_pending_alerts()
+        if not pending:
+            return 0
+
+        import yahooquery as yq
+        updated_count = 0
+        symbols = list(set([a["symbol"] for a in pending if a.get("symbol")]))
+
+        try:
+            batch_ticker = yq.Ticker(symbols)
+            price_details = batch_ticker.price
+        except Exception:
+            price_details = {}
+
+        for a in pending:
+            alert_id = a["id"]
+            sym = a["symbol"]
+            entry_p = float(a["price"] or 0.0)
+            if entry_p <= 0:
+                continue
+            target_pct = float(a["target_percent"] or 15.0)
+            target_p = entry_p * (1.0 + (target_pct / 100.0))
+
+            p_data = price_details.get(sym, {}) if isinstance(price_details, dict) else {}
+            if not isinstance(p_data, dict):
+                p_data = {}
+
+            curr_price = float(p_data.get("regularMarketPrice") or entry_p)
+            day_high = float(p_data.get("regularMarketDayHigh") or curr_price)
+            max_p = max(float(a.get("max_price_reached") or entry_p), curr_price, day_high)
+
+            if max_p >= target_p:
+                self.update_alert_status(alert_id, max_p, "SUCCESS")
+                updated_count += 1
+            elif max_p < entry_p * 0.95 and curr_price < entry_p * 0.95:
+                self.update_alert_status(alert_id, max_p, "FAILED")
+                updated_count += 1
+            else:
+                self.update_alert_status(alert_id, max_p, "PENDING")
+
+        return updated_count
+
     def save_model_weights(self, weights, bias, n_samples=0, val_precision=0.0, notes=""):
         with self.get_connection() as conn:
             cursor = conn.cursor()
