@@ -20,7 +20,13 @@ class DecisionEngine:
         
         # 1. basic features extraction
         price, change, prev_close = self.intel._session_price_change(quote, session)
-        volume = self.intel._safe_float(quote.get("regularMarketVolume"), 0.0)
+        if session == "PRE_MARKET":
+            volume = self.intel._safe_float(quote.get("preMarketVolume") or quote.get("regularMarketVolume"), 0.0)
+        elif session == "AFTER_HOURS":
+            volume = self.intel._safe_float(quote.get("postMarketVolume") or quote.get("regularMarketVolume"), 0.0)
+        else:
+            volume = self.intel._safe_float(quote.get("regularMarketVolume"), 0.0)
+            
         avg_volume = self.intel._safe_float(quote.get("averageDailyVolume3Month"), 100000.0)
         rvol = volume / avg_volume if avg_volume > 0 else 1.0
         
