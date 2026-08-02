@@ -20,6 +20,10 @@ from notifier import TelegramNotifier
 from database import QuantDatabase
 from alerts_tracker import get_active_halts, get_sec_filings_sentiment
 from decision_engine import DecisionEngine
+from daily_report import send_daily_closing_report
+
+# Simple in‑memory cache for SEC sentiment (expires after 4 hours)
+_sec_cache = {}
 
 
 def _env_int(name, default, minimum=1):
@@ -119,7 +123,7 @@ def start_scheduler():
     Checks halts every 60 seconds.
     Runs a full market scan every 180 seconds.
     """
-    print("Background Scanner: Scheduler thread started successfully.")
+    logging.info("Background Scanner: Scheduler thread started successfully.")
     # إعادة المحاولة عند فشل الاتصال بـ Yahoo Finance (timeout) بدلاً من إيقاف الـ daemon
     scanner = None
     for attempt in range(1, 20):
@@ -148,7 +152,8 @@ def start_scheduler():
     last_full_scan_at = 0.0
     notified_halts = set()
     recommended_halts = set()
-    
+    last_report_date = ""
+
     while True:
         try:
             # تحديث النبض اللحظي للمحرك الخلفي لتأكيد العمل
@@ -178,6 +183,10 @@ def start_scheduler():
             
             # If market is closed (night), still scan for gap-up setups that will open next day
             if session == "NIGHT_CLOSED":
+                # Daily closing report (run once per day after market close)
+                if current_date_str != last_report_date:
+                    send_daily_closing_report()
+                    last_report_date = current_date_str
                 print(f"Background Scanner: Market closed (Night). Running overnight gap-up setup scan...")
                 session = "PRE_MARKET"
                 
