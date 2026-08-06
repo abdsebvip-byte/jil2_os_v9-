@@ -586,9 +586,9 @@ def start_scheduler():
                         
             # Sleep 60 seconds for next halts check
             try:
-                import app
-                app.scanner_status["last_scan"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                app.scanner_status["scans_completed"] += 1
+                import state
+                state.scanner_status["last_scan"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                state.scanner_status["scans_completed"] += 1
             except Exception:
                 pass
             time.sleep(halt_poll_seconds)

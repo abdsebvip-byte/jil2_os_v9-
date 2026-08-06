@@ -7,14 +7,7 @@ import pytz
 
 app = Flask(__name__)
 
-# Track scanner status
-scanner_status = {
-    "started_at": None,
-    "last_scan": None,
-    "scans_completed": 0,
-    "errors": [],
-    "is_running": False
-}
+from state import scanner_status
 
 @app.route("/")
 def index():
