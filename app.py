@@ -83,6 +83,84 @@ def health():
 def api_status():
     return jsonify(scanner_status)
 
+@app.route("/logs")
+def view_logs():
+    log_path = "auto_scanner.log"
+    if not os.path.exists(log_path):
+        return "Log file not found.", 404
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        return "<pre>" + "".join(lines[-200:]) + "</pre>"
+    except Exception as e:
+        return f"Error reading logs: {e}", 500
+
+@app.route("/trace")
+def view_trace():
+    import sqlite3
+    db_path = "quant_platform.db"
+    if not os.path.exists(db_path):
+        return "Database file not found.", 404
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM evaluation_trace ORDER BY id DESC LIMIT 100")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        # Build simple HTML table
+        html = """
+        <html dir='rtl' lang='ar'>
+        <head>
+            <meta charset='utf-8'>
+            <title>سجل قرارات الاستبعاد والتنقيط</title>
+            <style>
+                body { font-family: sans-serif; background: #121212; color: #fff; padding: 20px; }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                th, td { border: 1px solid #333; padding: 10px; text-align: right; }
+                th { background: #1e1e1e; color: #00d4ff; }
+                tr:nth-child(even) { background: #1a1a1a; }
+                .ACCEPTED { color: #00c853; font-weight: bold; }
+                .REJECTED { color: #ff5252; }
+            </style>
+        </head>
+        <body>
+            <h1>📋 سجل فحص واستبعاد الأسهم (آخر 100 سهم)</h1>
+            <table>
+                <tr>
+                    <th>المعرف</th>
+                    <th>الرمز</th>
+                    <th>الوقت</th>
+                    <th>السعر</th>
+                    <th>التغير اليومي</th>
+                    <th>RVOL</th>
+                    <th>النقاء (Score)</th>
+                    <th>ML %</th>
+                    <th>الحالة</th>
+                    <th>سبب الاستبعاد</th>
+                </tr>
+        """
+        for r in rows:
+            html += f"""
+                <tr>
+                    <td>{r['id']}</td>
+                    <td><b>{r['symbol']}</b></td>
+                    <td>{r['evaluated_at']}</td>
+                    <td>${r['price']:.3f}</td>
+                    <td>{r['change']:.2f}%</td>
+                    <td>{r['rvol']:.2f}x</td>
+                    <td>{r['score']}%</td>
+                    <td>{r['ml_prob']:.1f}%</td>
+                    <td class='{r['status']}'>{r['status']}</td>
+                    <td>{r['rejection_reason'] or '-'}</td>
+                </tr>
+            """
+        html += "</table></body></html>"
+        return html
+    except Exception as e:
+        return f"Error reading database: {e}", 500
+
 @app.after_request
 def add_header(response):
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0'
