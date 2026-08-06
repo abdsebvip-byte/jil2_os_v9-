@@ -46,7 +46,7 @@ class TelegramNotifier:
         Sends formatted buy signal alerts to Abu Faisal's Telegram.
         """
         if not self.token or not self.chat_id:
-            print("TelegramNotifier: Credentials not loaded.")
+            logging.warning("TelegramNotifier: Credentials not loaded.")
             return False
 
         message = (
@@ -70,13 +70,13 @@ class TelegramNotifier:
         try:
             response = requests.post(url, json=payload, timeout=8)
             if response.status_code == 200:
-                print(f"TelegramNotifier: Alert sent for {symbol}")
+                logging.info(f"TelegramNotifier: Alert sent for {symbol}")
                 return True
             else:
-                print(f"TelegramNotifier: Failed to send. HTTP {response.status_code}: {response.text}")
+                logging.error(f"TelegramNotifier: Failed to send. HTTP {response.status_code}: {response.text}")
                 return False
         except Exception as e:
-            print(f"TelegramNotifier: Connection error: {str(e)}")
+            logging.error(f"TelegramNotifier: Connection error: {str(e)}")
             return False
 
     def send_custom_message(self, text):
@@ -84,7 +84,7 @@ class TelegramNotifier:
         Sends a general custom Markdown text message to the channel.
         """
         if not self.token or not self.chat_id:
-            print("TelegramNotifier: Credentials not loaded.")
+            logging.warning("TelegramNotifier: Credentials not loaded.")
             return False
             
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
@@ -97,6 +97,6 @@ class TelegramNotifier:
             response = requests.post(url, json=payload, timeout=8)
             return response.status_code == 200
         except Exception as e:
-            print(f"TelegramNotifier Custom Message Error: {e}")
+            logging.error(f"TelegramNotifier Custom Message Error: {e}")
             return False
 
