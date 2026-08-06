@@ -417,10 +417,46 @@ def start_bot_thread():
     bot.start_polling()
 
 
+def check_duplicate_instance():
+    import sys
+    import subprocess
+    pid_file = "bot_listener.pid"
+    if os.path.exists(pid_file):
+        try:
+            with open(pid_file, "r") as f:
+                old_pid = int(f.read().strip())
+            if old_pid == os.getpid():
+                return True
+                
+            if os.name == 'nt':
+                # Windows check: tasklist to verify if the old PID is still a running python process
+                cmd = f'tasklist /FI "PID eq {old_pid}" /NH'
+                out = subprocess.check_output(cmd, shell=True).decode('utf-8', errors='ignore')
+                if str(old_pid) in out and "python" in out.lower():
+                    print(f"BotListener is already running locally with PID {old_pid}. Exiting to prevent duplication.")
+                    sys.exit(0)
+            else:
+                # Unix check: send signal 0 to verify process existence
+                try:
+                    os.kill(old_pid, 0)
+                    print(f"BotListener is already running with PID {old_pid}. Exiting.")
+                    sys.exit(0)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+    
+    try:
+        with open(pid_file, "w") as f:
+            f.write(str(os.getpid()))
+    except Exception:
+        pass
+    return True
+
+
 if __name__ == "__main__":
     import dotenv
     import os
     dotenv.load_dotenv("config.env")
-    with open("bot_listener.pid", "w") as f:
-        f.write(str(os.getpid()))
+    check_duplicate_instance()
     start_bot_thread()
