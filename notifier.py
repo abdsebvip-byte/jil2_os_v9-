@@ -95,7 +95,11 @@ class TelegramNotifier:
         }
         try:
             response = requests.post(url, json=payload, timeout=8)
-            return response.status_code == 200
+            if response.status_code == 200:
+                return True
+            else:
+                logging.error(f"TelegramNotifier: Custom message failed. HTTP {response.status_code}: {response.text}")
+                return False
         except Exception as e:
             logging.error(f"TelegramNotifier Custom Message Error: {e}")
             return False
