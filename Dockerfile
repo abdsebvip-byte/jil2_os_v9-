@@ -15,11 +15,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose any needed ports (optional, e.g., for Flask health check)
-# EXPOSE 8000
+# Expose the port Render expects
+EXPOSE 10000
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
+ENV PORT=10000
 
-# Default command runs the auto scanner
-CMD ["python", "auto_scanner.py"]
+# Default command runs Flask app (which starts scanner in background)
+CMD ["python", "app.py"]
