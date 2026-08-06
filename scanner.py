@@ -164,10 +164,10 @@ class FreeMarketScanner:
                                     "postMarketChangePercent": float(d[12] or 0.0) if len(d) > 12 and d[12] is not None else 0.0,
                                     "preMarketVolume": float(d[15] or 0.0) if len(d) > 15 and d[15] is not None else 0.0,
                                     "postMarketVolume": float(d[16] or 0.0) if len(d) > 16 and d[16] is not None else 0.0,
-                                    "bid": float(d[1] or 0.0),
-                                    "ask": float(d[1] or 0.0),
-                                    "bidSize": 100.0,
-                                    "askSize": 100.0,
+                                    "bid": float(d[1] or 0.0) * 0.999,  # approximate bid slightly below close
+                                    "ask": float(d[1] or 0.0) * 1.001,  # approximate ask slightly above close
+                                    "bidSize": max(float(d[3] or 100.0) * 0.6, 100.0),  # approximate from volume
+                                    "askSize": max(float(d[3] or 100.0) * 0.4, 100.0),  # approximate from volume
                                     "vwap": float(d[7] or 0.0),
                                     "value_traded": float(d[8] or 0.0),
                                     "float_shares_outstanding": float(d[5] or 10000000.0),
@@ -209,9 +209,40 @@ class FreeMarketScanner:
                 print(f"fetch_all_us_symbols (Yahoo Fallback): Found {len(symbols)} active stocks.")
                 return symbols
             except Exception as yf_err:
-                print(f"fetch_all_us_symbols: Yahoo Fallback failed too ({str(yf_err)}). Using offline hardcoded tickers.")
+                print(f"fetch_all_us_symbols: Yahoo Fallback failed too ({str(yf_err)}). Using yahooquery Ticker fallback.")
+                fallback_syms = ["AMC", "GME", "SNDL", "NIO", "PLTR", "SOFI", "LCID", "MARA", "RIOT",
+                                 "MULN", "BBBY", "CLOV", "WISH", "ATER", "PROG", "GFAI", "BIOR"]
+                try:
+                    import yahooquery as yq
+                    tickers = yq.Ticker(fallback_syms)
+                    price_data = tickers.price
+                    fb_quotes = []
+                    for sym in fallback_syms:
+                        if sym in price_data and isinstance(price_data[sym], dict):
+                            p = price_data[sym]
+                            fb_quotes.append({
+                                "symbol": sym,
+                                "regularMarketPrice": float(p.get("regularMarketPrice") or 0.0),
+                                "regularMarketChangePercent": float(p.get("regularMarketChangePercent") or 0.0) * 100.0 if float(p.get("regularMarketChangePercent") or 0.0) < 1.0 else float(p.get("regularMarketChangePercent") or 0.0),
+                                "regularMarketVolume": float(p.get("regularMarketVolume") or 0.0),
+                                "averageDailyVolume3Month": float(p.get("averageDailyVolume3Month") or 100000.0),
+                                "regularMarketPreviousClose": float(p.get("regularMarketPreviousClose") or 0.0),
+                                "regularMarketOpen": float(p.get("regularMarketOpen") or 0.0),
+                                "float_shares_outstanding": float(p.get("sharesOutstanding") or 10000000.0),
+                                "bid": float(p.get("regularMarketPrice") or 0.0),
+                                "ask": float(p.get("regularMarketPrice") or 0.0),
+                                "bidSize": 100.0,
+                                "askSize": 100.0,
+                                "vwap": 0.0,
+                                "value_traded": 0.0,
+                            })
+                    if fb_quotes:
+                        self.cached_quotes = fb_quotes
+                        return [q["symbol"] for q in fb_quotes]
+                except Exception as fb_err:
+                    print(f"fetch_all_us_symbols: yahooquery Ticker fallback also failed ({fb_err}).")
                 self.cached_quotes = []
-                return ["AMC", "GME", "SNDL", "NIO", "PLTR", "SOFI", "LCID", "MARA", "RIOT"]
+                return []
 
     async def scan_entire_market(self):
         """

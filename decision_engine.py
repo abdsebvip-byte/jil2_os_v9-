@@ -125,13 +125,13 @@ class DecisionEngine:
             return trace
             
         # Rule C: Daily Change boundaries (ideal discovery range)
-        if change < 5.0:
+        if change < 3.0:
             trace["status"] = "REJECTED"
-            trace["rejection_reason"] = f"نسبة الارتفاع اليومي منخفضة جداً (+{change:.1f}% < +5%)"
+            trace["rejection_reason"] = f"نسبة الارتفاع اليومي منخفضة جداً (+{change:.1f}% < +3%)"
             return trace
-        if change > 45.0:
+        if change > 60.0:
             trace["status"] = "REJECTED"
-            trace["rejection_reason"] = f"السهم منفجر بالفعل ومتضخم سعرياً (+{change:.1f}% > +45%) — فوات منطقة الدخول الآمنة تجنباً للهبوط الحاد (FOMO)"
+            trace["rejection_reason"] = f"السهم منفجر بالفعل ومتضخم سعرياً (+{change:.1f}% > +60%) — فوات منطقة الدخول الآمنة تجنباً للهبوط الحاد (FOMO)"
             return trace
         if change > 30.0 and not has_catalyst:
             if score < 85 or ml_prob < 75.0:
@@ -163,7 +163,7 @@ class DecisionEngine:
             
         # Rule G: Conviction and ML Classifier decision
         # We accept if score >= 80, OR if Supernova FTAI/Volatility Squeeze detected at score >= 70, OR if ML model probability is high >= 75%
-        min_score = 80
+        min_score = 70
         is_supernova_early = bool(details.get("Supernova_FTAI_Early") or details.get("Volatility_Squeeze_Coil"))
         
         if score < min_score:

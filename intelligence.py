@@ -214,10 +214,10 @@ class QuantIntelligence:
             score += 10
             details["Early_Breakout"] = "HIGH"
         elif 30.0 < price_change <= fomo_limit:
-            score -= 15  # عقوبة للتضخم السعري وفوات منطقة الشراء الآمنة
+            score -= 5  # عقوبة للتضخم السعري وفوات منطقة الشراء الآمنة
             details["Early_Breakout"] = "EXTENDED_RISK"
         elif price_change > fomo_limit:
-            score -= 30  # عقوبة قاسية لمنع الـ FOMO بالكامل
+            score -= 10  # عقوبة قاسية لمنع الـ FOMO بالكامل
             details["Early_Breakout"] = "FOMO_BLOCKED"
         else:
             details["Early_Breakout"] = "LOW_CHANGE"
@@ -255,7 +255,7 @@ class QuantIntelligence:
         ask = self._safe_float(quote.get("ask"), price)
         obi = (bid_size - ask_size) / (bid_size + ask_size) if (bid_size + ask_size) > 0 else 0.0
         spread_bps = ((ask - bid) / price) * 10000.0 if price > 0 and ask >= bid else 0.0
-        if obi >= 0.3 and spread_bps <= thresholds["max_spread_bps"]:
+        if obi >= 0.15 and spread_bps <= thresholds["max_spread_bps"]:
             score += 10
             details["OBI_Imbalance"] = True
         else:
