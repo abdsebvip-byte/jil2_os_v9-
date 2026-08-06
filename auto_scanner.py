@@ -149,7 +149,7 @@ def start_scheduler():
     asyncio.set_event_loop(loop)
     
     last_optimization_date = ""
-    last_full_scan_at = 0.0
+    last_full_scan_at = -9999.0
     notified_halts = set()
     recommended_halts = set()
     last_report_date = ""
