@@ -399,12 +399,30 @@ def start_scheduler():
                             price = _safe_float(quote.get("postMarketPrice"), price)
                             change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else change
 
+                        # Pre-filter checks to avoid sequential web requests for non-candidate stocks
+                        max_price_limit = 50.0 if session in ["PRE_MARKET", "AFTER_HOURS", "NIGHT_CLOSED"] else 20.0
+                        if not (0.1 <= price <= max_price_limit):
+                            continue
+                            
+                        if not (3.0 <= change <= 60.0):
+                            continue
+                            
+                        float_shares = _safe_float(quote.get("float_shares_outstanding") or quote.get("floatShares"), 10000000.0)
+                        thresholds = intel.get_thresholds()
+                        if float_shares > thresholds.get("float_max", 30000000.0):
+                            continue
+                            
+                        avg_volume = _safe_float(quote.get("averageDailyVolume3Month"), 100000.0)
+                        volume = _safe_float(quote.get("regularMarketVolume"), 0.0)
+                        rvol = volume / avg_volume if avg_volume > 0 else 1.0
+                        rvol_limit = thresholds.get("rvol_min", 2.0)
+                        if session in ["PRE_MARKET", "AFTER_HOURS", "NIGHT_CLOSED"]:
+                            rvol_limit = 0.05
+                        if rvol < rvol_limit:
+                            continue
+
                         # Fetch news catalyst (SEC Form 4 or 8-K) only for active candidates to avoid rate limits
-                        vol_val = _safe_float(quote.get("regularMarketVolume"), 0.0)
-                        if abs(change) >= 1.0 or vol_val >= 50000.0:
-                            sec_sentiment = get_sec_filings_sentiment(sym)
-                        else:
-                            sec_sentiment = {"insider_buy": False, "material_news": False, "dilution_warning": False, "details": []}
+                        sec_sentiment = get_sec_filings_sentiment(sym)
                         anomaly_info = anomaly_map.get(sym, {"is_anomaly": False, "confidence_score": 1.0})
                         
                         is_yahoo = sym in yahoo_trending
