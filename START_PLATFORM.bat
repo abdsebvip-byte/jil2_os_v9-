@@ -13,21 +13,21 @@ SET NGROK_EXE=%PROJECT_DIR%\ngrok.exe
 cd /d "%PROJECT_DIR%"
 
 REM --- 1. تسجيل ngrok authtoken (مرة واحدة، لا تضر التكرار) ---
-"%NGROK_EXE%" config add-authtoken %NGROK_TOKEN%
+"%NGROK_EXE%" authtoken %NGROK_TOKEN%
 
 REM --- 2. تشغيل Streamlit في الخلفية ---
-start "Streamlit" /min cmd /c "%VENV_PY% -m streamlit run app_v10.py --server.headless true >> streamlit.log 2>&1"
+start "Streamlit" /min cmd /c "%VENV_PY% -m streamlit run app_v10.py --server.headless true >> streamlit_console.log 2>&1"
 
 REM --- 3. الانتظار 5 ثوانٍ حتى يبدأ Streamlit ---
 timeout /t 5 /nobreak >nul
 
 REM --- 4. تشغيل ngrok بالرابط الثابت ---
-start "ngrok" /min cmd /c "\"%NGROK_EXE%\" http --url=%NGROK_DOMAIN% 8501 >> ngrok.log 2>&1"
+start "ngrok" /min cmd /c "\"%NGROK_EXE%\" http --url=%NGROK_DOMAIN% 8501 >> ngrok_console.log 2>&1"
 
 REM --- 5. تشغيل دaemon الفحص التلقائي ---
-start "AutoScanner" /min cmd /c "%VENV_PY% auto_scanner.py >> auto_scanner.log 2>&1"
+start "AutoScanner" /min cmd /c "%VENV_PY% auto_scanner.py >> auto_scanner_console.log 2>&1"
 
 REM --- 6. تشغيل دaemon البوت ---
-start "BotListener" /min cmd /c "%VENV_PY% bot_listener.py >> bot_listener.log 2>&1"
+start "BotListener" /min cmd /c "%VENV_PY% bot_listener.py >> bot_listener_console.log 2>&1"
 
 echo Platform started. URL: https://%NGROK_DOMAIN%
