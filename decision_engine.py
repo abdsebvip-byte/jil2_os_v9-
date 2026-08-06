@@ -162,21 +162,21 @@ class DecisionEngine:
             return trace
             
         # Rule G: Conviction and ML Classifier decision
-        # We accept if score >= 80, OR if Supernova FTAI/Volatility Squeeze detected at score >= 70, OR if ML model probability is high >= 75%
-        min_score = 70
+        # We accept if score >= 80, OR if Supernova FTAI/Volatility Squeeze detected at score >= 75, OR if ML model probability is high >= 80%
+        min_score = 80
         is_supernova_early = bool(details.get("Supernova_FTAI_Early") or details.get("Volatility_Squeeze_Coil"))
         
         if score < min_score:
-            if is_supernova_early and score >= 70:
+            if is_supernova_early and score >= 75:
                 trace["status"] = "ACCEPTED"
                 trace["rejection_reason"] = f"اكتشاف مبكر مؤكد لانفجار خارق في القاع (Supernova FTAI / Volatility Squeeze)"
-            elif ml_prob >= 75.0:
+            elif ml_prob >= 80.0:
                 # ML Override: Accept the breakout despite lower manual score!
                 trace["status"] = "ACCEPTED"
                 trace["rejection_reason"] = f"تم التمرير استثنائياً بقوة الذكاء الاصطناعي (ML: {ml_prob:.1f}%)"
             else:
                 trace["status"] = "REJECTED"
-                trace["rejection_reason"] = f"قناعة منخفضة (Score: {score}% < 80% | ML: {ml_prob:.1f}% < 75%)"
+                trace["rejection_reason"] = f"قناعة منخفضة (Score: {score}% < 80% | ML: {ml_prob:.1f}% < 80%)"
                 return trace
 
         return trace
