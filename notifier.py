@@ -10,9 +10,15 @@ class TelegramNotifier:
 
     def load_credentials(self):
         """
-        Loads credentials from config.env or streamlit secrets.
+        Loads credentials from environment variables, config.env, or streamlit secrets.
         """
-        # محاولة التحميل من إعدادات سحابة Streamlit أولاً
+        # 1. Load from environment variables (standard for Docker / Render)
+        self.token = os.getenv("TELEGRAM_BOT_TOKEN")
+        self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
+        if self.token and self.chat_id:
+            return
+
+        # 2. Try loading from Streamlit secrets
         try:
             import streamlit as st
             if "TELEGRAM_BOT_TOKEN" in st.secrets:
@@ -22,7 +28,7 @@ class TelegramNotifier:
         except:
             pass
 
-        # محاولة التحميل من ملف config.env المحلي
+        # 3. Try loading from local config.env file
         if os.path.exists("config.env"):
             with open("config.env", "r") as f:
                 for line in f:
