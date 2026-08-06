@@ -454,11 +454,14 @@ def start_scheduler():
                         
                         # 3. إرسال تنبيه في حال القبول فقط
                         if trace["status"] == "ACCEPTED":
+                            logging.info(f"AutoScanner: Symbol {sym} ACCEPTED. Starting alert dispatch...")
                             # 🛡️ حظر التنبيهات اللحظية أثناء إغلاق البورصة في الليل وعطلة نهاية الأسبوع
                             if session == "NIGHT_CLOSED":
+                                logging.info(f"AutoScanner: Suppressing alert for {sym} due to NIGHT_CLOSED session.")
                                 continue
 
                             if db.check_alert_sent_recently(sym, hours=3):
+                                logging.info(f"AutoScanner: Suppressing alert for {sym} - alert sent recently.")
                                 continue
                                 
                             # 🔄 تحديث مباشر ولحظي للسعر الآن قبل إرسال التنبيه لإلغاء أي تأخير بيانات (Stale Data Guard)
@@ -470,7 +473,9 @@ def start_scheduler():
                                 if _live_p > 0.0 and _live_pc > 0.0:
                                     price = _live_p
                                     change = ((_live_p - _live_pc) / _live_pc) * 100.0
+                                    logging.info(f"AutoScanner: Live price for {sym} updated to ${price:.4f} (+{change:.1f}%)")
                             except Exception as _p_err:
+                                logging.warning(f"AutoScanner: Failed to update live price for {sym}: {_p_err}")
                                 pass
 
                             # حارس الارتفاع المفرط اللحظي: إذا أظهر السعر المباشر الآن أن السهم انفجر وتجاوز +45% -> يُلغى التنبيه فوراً!
@@ -553,6 +558,7 @@ def start_scheduler():
                             
                             success = notifier.send_custom_message(alert_msg)
                             if success:
+                                logging.info(f"AutoScanner: Alert message for {sym} sent successfully to Telegram.")
                                 db.log_sent_alert(sym)
                                 alert_id = db.log_alert_history(
                                     symbol=sym,
@@ -564,6 +570,8 @@ def start_scheduler():
                                     status="PENDING",
                                     initial_change=change
                                 )
+                            else:
+                                logging.error(f"AutoScanner: Alert message for {sym} failed to send to Telegram (notifier returned False).")
                                 # Save features and score to signals database
                                 try:
                                     # Calculate ML score and get features
