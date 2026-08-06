@@ -127,6 +127,7 @@ def view_trace():
         </head>
         <body>
             <h1>📋 سجل فحص واستبعاد الأسهم (آخر 100 سهم)</h1>
+            <p><a href="/" style="color:#00d4ff;">🏠 العودة للرئيسية</a> | <a href="/alerts" style="color:#00d4ff;">🔔 سجل التنبيهات المرسلة</a> | <a href="/logs" style="color:#00d4ff;">📄 السجلات البرمجية</a></p>
             <table>
                 <tr>
                     <th>المعرف</th>
@@ -154,6 +155,70 @@ def view_trace():
                     <td>{r['ml_prob']:.1f}%</td>
                     <td class='{r['status']}'>{r['status']}</td>
                     <td>{r['rejection_reason'] or '-'}</td>
+                </tr>
+            """
+        html += "</table></body></html>"
+        return html
+    except Exception as e:
+        return f"Error reading database: {e}", 500
+
+@app.route("/alerts")
+def view_alerts():
+    import sqlite3
+    db_path = "quant_platform.db"
+    if not os.path.exists(db_path):
+        return "Database file not found.", 404
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM alerts_history ORDER BY id DESC LIMIT 100")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        html = """
+        <html dir='rtl' lang='ar'>
+        <head>
+            <meta charset='utf-8'>
+            <title>سجل التنبيهات المرسلة</title>
+            <style>
+                body { font-family: sans-serif; background: #121212; color: #fff; padding: 20px; }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                th, td { border: 1px solid #333; padding: 10px; text-align: right; }
+                th { background: #1e1e1e; color: #ffab40; }
+                tr:nth-child(even) { background: #1a1a1a; }
+            </style>
+        </head>
+        <body>
+            <h1>🔔 سجل التنبيهات المرسلة لـ Telegram (آخر 100 تنبيه)</h1>
+            <p><a href="/" style="color:#ffab40;">🏠 العودة للرئيسية</a> | <a href="/trace" style="color:#ffab40;">📋 سجل التتبع</a> | <a href="/logs" style="color:#ffab40;">📄 السجلات البرمجية</a></p>
+            <table>
+                <tr>
+                    <th>المعرف</th>
+                    <th>الرمز</th>
+                    <th>تاريخ الإرسال</th>
+                    <th>سعر التنبيه</th>
+                    <th>النقاط (Score)</th>
+                    <th>النوع</th>
+                    <th>الجلسة</th>
+                    <th>الهدف المقدر</th>
+                    <th>أقصى سعر وصل له</th>
+                    <th>الحالة</th>
+                </tr>
+        """
+        for r in rows:
+            html += f"""
+                <tr>
+                    <td>{r['id']}</td>
+                    <td><b>{r['symbol']}</b></td>
+                    <td>{r['sent_at']}</td>
+                    <td>${r['price']:.3f}</td>
+                    <td>{r['score']}%</td>
+                    <td>{r['alert_type']}</td>
+                    <td>{r['session']}</td>
+                    <td>+{r['target_percent']}%</td>
+                    <td>${r['max_price_reached']:.3f}</td>
+                    <td>{r['status']}</td>
                 </tr>
             """
         html += "</table></body></html>"
