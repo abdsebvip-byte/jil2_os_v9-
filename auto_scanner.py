@@ -567,6 +567,12 @@ def start_scheduler():
                         continue
                         
             # Sleep 60 seconds for next halts check
+            try:
+                import app
+                app.scanner_status["last_scan"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                app.scanner_status["scans_completed"] += 1
+            except Exception:
+                pass
             time.sleep(halt_poll_seconds)
         except Exception as e:
             logging.error(f"Background Scanner Main Loop Critical Error: {e}")
