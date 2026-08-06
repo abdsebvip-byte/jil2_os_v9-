@@ -443,6 +443,21 @@ class QuantDatabase:
                 SET max_price_reached = ?, status = ? 
                 WHERE id = ?
             """, (float(max_price), str(status), int(alert_id)))
+            
+            # 🔄 Automatic Outcome Feedback Loop: Populating labels table for ML training
+            if status in ["SUCCESS", "PARTIAL", "FAILED"]:
+                outcome = 1 if status in ["SUCCESS", "PARTIAL"] else 0
+                cursor.execute("""
+                    INSERT OR REPLACE INTO labels (signal_id, ts_label, outcome, price_start, price_end)
+                    VALUES (
+                        ?, 
+                        ?, 
+                        ?, 
+                        (SELECT COALESCE(price, 0.0) FROM alerts_history WHERE id = ?), 
+                        ?
+                    )
+                """, (int(alert_id), datetime.now().isoformat(), outcome, int(alert_id), float(max_price)))
+                
             conn.commit()
 
     def evaluate_historical_alert_outcomes(self):
