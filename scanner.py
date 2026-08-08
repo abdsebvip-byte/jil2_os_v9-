@@ -73,7 +73,7 @@ class FreeMarketScanner:
             "name", "close", "change", "volume", "relative_volume_10d_active",
             "float_shares_outstanding", "average_volume_30d_calc", "VWAP", "Value.Traded",
             "premarket_close", "premarket_change", "postmarket_close", "postmarket_change",
-            "short_percent_of_float", "short_ratio", "premarket_volume", "postmarket_volume"
+            "short_percent_of_float", "short_ratio", "premarket_volume", "postmarket_volume", "high"
         ]
 
         # Determine filter field & sort field based on active session
@@ -158,9 +158,9 @@ class FreeMarketScanner:
                                     "averageDailyVolume3Month": float(d[6] or 100000.0),
                                     "regularMarketPreviousClose": float(d[1] or 0.0) / (1.0 + (float(d[2] or 0.0) / 100.0)) if d[2] else float(d[1] or 0.0),
                                     "regularMarketOpen": float(d[1] or 0.0),
-                                    "preMarketPrice": float(d[9] or d[1] or 0.0) if len(d) > 9 and d[9] is not None else float(d[1] or 0.0),
+                                    "preMarketPrice": float(d[9]) if len(d) > 9 and d[9] is not None else None,
                                     "preMarketChangePercent": float(d[10] or 0.0) if len(d) > 10 and d[10] is not None else 0.0,
-                                    "postMarketPrice": float(d[11] or d[1] or 0.0) if len(d) > 11 and d[11] is not None else float(d[1] or 0.0),
+                                    "postMarketPrice": float(d[11]) if len(d) > 11 and d[11] is not None else None,
                                     "postMarketChangePercent": float(d[12] or 0.0) if len(d) > 12 and d[12] is not None else 0.0,
                                     "preMarketVolume": float(d[15] or 0.0) if len(d) > 15 and d[15] is not None else 0.0,
                                     "postMarketVolume": float(d[16] or 0.0) if len(d) > 16 and d[16] is not None else 0.0,
@@ -172,7 +172,8 @@ class FreeMarketScanner:
                                     "value_traded": float(d[8] or 0.0),
                                     "float_shares_outstanding": float(d[5] or 10000000.0),
                                     "short_percent": float(d[13] or 0.0) if len(d) > 13 and d[13] is not None else 0.0,
-                                    "days_to_cover": float(d[14] or 0.0) if len(d) > 14 and d[14] is not None else 0.0
+                                    "days_to_cover": float(d[14] or 0.0) if len(d) > 14 and d[14] is not None else 0.0,
+                                    "regularMarketDayHigh": float(d[17] or d[1] or 0.0) if len(d) > 17 and d[17] is not None else float(d[1] or 0.0)
                                 })
                 except Exception as e:
                     print(f"fetch_all_us_symbols: {label} query error ({e})")

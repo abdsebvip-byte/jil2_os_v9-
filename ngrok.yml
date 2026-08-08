@@ -1,0 +1,10 @@
+﻿version: "3"
+agent:
+  authtoken_from_env: true
+
+tunnels:
+  jil2:
+    proto: http
+    addr: 8501
+    domain: bush-subdued-epilogue.ngrok-free.dev
+    inspect: false

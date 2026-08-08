@@ -9,6 +9,9 @@ import time as _time
 _SEC_CACHE: dict = {}
 _SEC_CACHE_TTL = 900  # ثواني (15 دقيقة)
 
+_BLACKLIST = set()
+_FAILED_COUNTS = {}
+
 # إسكات تنبيهات yfinance الخاصة بالأخبار لتنظيف السجلات
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
@@ -53,8 +56,18 @@ def get_sec_filings_sentiment(symbol):
     for SEC Form 4 (insider buy), Form 8-K (material event), and Form S-1 (dilution warning).
     نتيجة كل رمز تُخزّن 5 دقائق لتجنب تكرار طلبات HTTP.
     """
-    global _SEC_CACHE
+    global _SEC_CACHE, _BLACKLIST, _FAILED_COUNTS
     now = _time.monotonic()
+    
+    # Return empty sentiment immediately if symbol is blacklisted to avoid network calls
+    if symbol in _BLACKLIST:
+        return {
+            "insider_buy": False,
+            "material_news": False,
+            "dilution_warning": False,
+            "details": []
+        }
+
     if symbol in _SEC_CACHE:
         cached_val, cached_at = _SEC_CACHE[symbol]
         if now - cached_at < _SEC_CACHE_TTL:
@@ -95,6 +108,11 @@ def get_sec_filings_sentiment(symbol):
                 sentiment["details"].append("Form S-1 (Dilution Alert)")
     except Exception as e:
         logging.warning(f"SECFilingsTracker Error for {symbol}: {e}")
+        # Add to failed counts and blacklist if it fails repeatedly
+        _FAILED_COUNTS[symbol] = _FAILED_COUNTS.get(symbol, 0) + 1
+        if _FAILED_COUNTS[symbol] >= 2:
+            _BLACKLIST.add(symbol)
+            logging.warning(f"Symbol {symbol} has been BLACKLISTED from SEC tracking due to repeated failures.")
         
     # حفظ النتيجة في الكاش قبل الإرجاع
     _SEC_CACHE[symbol] = (sentiment, now)

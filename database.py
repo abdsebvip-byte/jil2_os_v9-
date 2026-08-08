@@ -373,6 +373,7 @@ class QuantDatabase:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (symbol, datetime.now().isoformat(), float(price), float(score), str(alert_type), str(session), float(target_percent), float(price), str(status), float(initial_change)))
             conn.commit()
+            return cursor.lastrowid
 
     def check_alert_sent_recently(self, symbol, hours=3):
         """

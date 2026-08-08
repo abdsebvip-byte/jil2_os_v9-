@@ -1,6 +1,7 @@
 # module: notifier.py
 import requests
 import os
+import logging
 
 class TelegramNotifier:
     def __init__(self):
@@ -49,15 +50,28 @@ class TelegramNotifier:
             logging.warning("TelegramNotifier: Credentials not loaded.")
             return False
 
+        # --- PM ARCHITECTURE UPGRADE: 1. Fix Price Lag ---
+        # Fetch real-time tick just before sending to ensure 100% precision
+        try:
+            import yahooquery as yq
+            t = yq.Ticker(symbol)
+            rt_price = t.price[symbol].get('regularMarketPrice', price) if isinstance(t.price, dict) and symbol in t.price else price
+            if rt_price > 0:
+                price = rt_price # Use the real-time price instead of scanner snapshot
+        except Exception as e:
+            logging.warning(f"Failed to fetch real-time tick for {symbol}: {e}")
+
+        # --- PM ARCHITECTURE UPGRADE: 4. Time Stop Warning ---
         message = (
             f"🎯 *فرصة انفجار سعري مكتشفة!*\n\n"
             f"🏢 *رمز السهم:* `{symbol}`\n"
-            f"💵 *السعر الحالي:* `${price:.4f}`\n"
+            f"💵 *السعر الحالي (لحظي):* `${price:.4f}`\n"
             f"📈 *التغير اليومي:* `+{change:.2f}%`\n"
             f"🔊 *الحجم النسبي RVOL:* `{rvol:.2f}x`\n\n"
             f"🔥 *نسبة تطابق الخوارزمية:* `{score}%`\n"
             f"⭐ *مؤشر ثقة السيولة (ML):* `{confidence}/10`\n\n"
-            f"⚠️ *ملاحظة:* هذه محاكاة تداول حية للحفاظ على رأس مالك."
+            f"⏱️ *صلاحية التوصية:* `10 دقائق فقط` (Time Stop)\n"
+            f"⚠️ *ملاحظة:* إذا لم ينفجر السهم فوراً، قم بإلغاء الصفقة لتحرير السيولة."
         )
 
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"

@@ -32,104 +32,128 @@ class QuantMLClassifier:
 
     def train_model(self):
         """
-        Train a calibrated XGBoost Classifier model on historical breakout data of 500+ active tickers.
+        Train a calibrated XGBoost Classifier model on historical breakout data.
+        Focuses specifically on LOW-FLOAT small-cap stocks (float < 15M shares)
+        that are the actual targets of the platform's explosive breakout mandate.
+
+        Key changes vs original:
+        - Only trains on small-cap / low-float screeners (NOT blue chips like AAPL)
+        - Label threshold raised to 30% (from 15%) to match real explosive moves
+        - Adds class_weight balancing (scale_pos_weight) to handle the label imbalance
+          (most days stocks don't move 30%+, so positives are rare)
+        - Uses 12-month history for more positive samples
         """
-        print("QuantMLClassifier: Training new Calibrated XGBoost Classifier on 500+ symbols...")
-        
-        # 1. Fetch 500+ unique active symbols using multiple screeners
+        print("QuantMLClassifier: Training XGBoost on LOW-FLOAT explosive breakout targets...")
+
+        # 1. Fetch symbols focused on small-cap / high-momentum stocks only
         screener = Screener()
         screeners_to_query = [
-            'day_gainers', 'most_actives', 'small_cap_gainers', 
-            'day_losers', 'undervalued_growth_stocks', 'growth_technology_stocks'
+            'small_cap_gainers',
+            'day_gainers',
+            'most_actives',
         ]
-        
+
         symbols_set = set()
         try:
-            data = screener.get_screeners(screen_ids=screeners_to_query, count=150)
+            data = screener.get_screeners(screen_ids=screeners_to_query, count=200)
             for key in screeners_to_query:
                 screener_data = data.get(key, {})
                 if isinstance(screener_data, dict):
                     raw_quotes = screener_data.get('quotes', [])
                     for q in raw_quotes:
                         symbol = q.get('symbol')
-                        if symbol and symbol.isalpha():
+                        # Only include pure alphabetical symbols (no warrants/SPACs)
+                        if symbol and symbol.isalpha() and len(symbol) <= 4:
                             symbols_set.add(symbol)
         except Exception as e:
             print(f"QuantMLClassifier Screener Warning: {e}")
-            
+
         train_symbols = list(symbols_set)
-        if len(train_symbols) < 100:
-            # Fallback list if screeners fail
-            train_symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "AMD", "PLTR", "SOFI"] * 10
-            
-        print(f"QuantMLClassifier: Loaded {len(train_symbols)} symbols for training.")
-        
-        # 2. Fetch key stats (float & short percent) for training symbols in batches
+        if len(train_symbols) < 50:
+            # Focused fallback on known historical small-cap movers
+            train_symbols = [
+                "SNDL", "XELA", "PROG", "MNMD", "CLOV", "EXPR", "SPRT",
+                "BBIG", "ATER", "GFAI", "PHUN", "CXAI", "BFRI", "PTE",
+                "MULN", "GOVX", "DWAC", "BWMX", "MMAT", "NKLA", "SOXS",
+                "TPVG", "MITI", "FFIE", "GROM", "LNTH", "BOXL", "EDTK",
+                "ACST", "GFAI", "NRXP", "SIGA", "UONE", "PALT", "BTBT"
+            ] * 3
+
+        print(f"QuantMLClassifier: Loaded {len(train_symbols)} small-cap symbols for training.")
+
+        # 2. Fetch float & short stats and filter out large-cap (float > 15M)
         stats_map = {}
         batch_size = 40
         for i in range(0, len(train_symbols), batch_size):
-            batch = train_symbols[i:i+batch_size]
+            batch = train_symbols[i:i + batch_size]
             try:
                 stats = Ticker(batch).key_stats
                 for sym in batch:
                     if sym in stats and isinstance(stats[sym], dict):
-                        float_s = float(stats[sym].get("floatShares") or 10000000.0)
+                        float_s = float(stats[sym].get("floatShares") or 15000000.0)
                         short_p = float(stats[sym].get("shortPercentOfFloat") or 0.0) * 100.0
-                        stats_map[sym] = {
-                            "float_shares_m": float_s / 1000000.0,
-                            "short_percent": short_p
-                        }
-            except:
+                        # Only keep symbols with float under 15M shares (platform mandate)
+                        if float_s <= 15000000.0:
+                            stats_map[sym] = {
+                                "float_shares_m": float_s / 1000000.0,
+                                "short_percent": short_p
+                            }
+            except Exception:
                 pass
-                
-        # 3. Fetch 6-month historical daily candles in bulk
-        tickers = Ticker(train_symbols)
-        df = tickers.history(period="6mo")
+
+        # Use the filtered symbol list
+        filtered_symbols = [s for s in train_symbols if s in stats_map] or train_symbols
+
+        # 3. Fetch 12-month history (more data = more positive label samples)
+        tickers = Ticker(filtered_symbols)
+        df = tickers.history(period="1y")
         if df is None or df.empty:
             print("QuantMLClassifier Error: Could not fetch training data. Keeping model as None.")
             self.model = None
             return
-            
+
         df = df.reset_index()
         df['date'] = pd.to_datetime(df['date'], utc=True)
         df = df.set_index(['symbol', 'date']).sort_index()
-        
+
         features_list = []
         labels_list = []
-        
-        unique_syms = df.index.levels[0]
+
+        unique_syms = df.index.get_level_values(0).unique()
         for sym in unique_syms:
             try:
                 stock_data = df.loc[sym].copy()
                 if len(stock_data) < 25:
                     continue
-                    
-                # Calculate indicators
+
+                # Feature engineering
                 stock_data['prev_close'] = stock_data['close'].shift(1)
-                stock_data['pct_change'] = ((stock_data['close'] - stock_data['prev_close']) / stock_data['prev_close']) * 100
+                stock_data['pct_change'] = (
+                    (stock_data['close'] - stock_data['prev_close']) / stock_data['prev_close']
+                ) * 100
                 stock_data['vol_sma20'] = stock_data['volume'].rolling(20).mean()
-                stock_data['rvol'] = stock_data['volume'] / stock_data['vol_sma20']
-                
-                # Standard deviation over 10 days for consolidation
+                stock_data['rvol'] = stock_data['volume'] / (stock_data['vol_sma20'] + 1e-6)
+
                 stock_data['std_10d'] = stock_data['close'].rolling(10).std()
                 stock_data['mean_10d'] = stock_data['close'].rolling(10).mean()
-                stock_data['volatility_10d'] = (stock_data['std_10d'] / stock_data['mean_10d']) * 100
-                
-                # Yesterday's indicators
+                stock_data['volatility_10d'] = (stock_data['std_10d'] / (stock_data['mean_10d'] + 1e-6)) * 100
+
                 stock_data['prev_rvol'] = stock_data['rvol'].shift(1)
                 stock_data['prev_change'] = stock_data['pct_change'].shift(1)
-                
-                # Labeling: 1 if high price in the next 2 days rises >= 15% from today's close
+
+                # IMPROVED LABELING: 30% gain in next 2 trading days high (matches real explosive targets)
                 stock_data['next_max_high'] = stock_data['high'].shift(-1).rolling(2, min_periods=1).max()
-                stock_data['target_gain'] = ((stock_data['next_max_high'] - stock_data['close']) / stock_data['close']) * 100
-                stock_data['label'] = (stock_data['target_gain'] >= 15.0).astype(int)
-                
-                # Clean up NaN rows
-                stock_data = stock_data.dropna(subset=['rvol', 'volatility_10d', 'prev_rvol', 'prev_change', 'label'])
-                
-                # Get fundamental features
+                stock_data['target_gain'] = (
+                    (stock_data['next_max_high'] - stock_data['close']) / (stock_data['close'] + 1e-6)
+                ) * 100
+                stock_data['label'] = (stock_data['target_gain'] >= 30.0).astype(int)
+
+                stock_data = stock_data.dropna(
+                    subset=['rvol', 'volatility_10d', 'prev_rvol', 'prev_change', 'label']
+                )
+
                 f_data = stats_map.get(sym, {"float_shares_m": 10.0, "short_percent": 0.0})
-                
+
                 for _, row in stock_data.iterrows():
                     features_list.append([
                         float(row['close']),
@@ -142,37 +166,52 @@ class QuantMLClassifier:
                         float(f_data['short_percent'])
                     ])
                     labels_list.append(int(row['label']))
-            except Exception as e:
+            except Exception:
                 pass
-                
+
         if len(features_list) < 100:
             print("QuantMLClassifier: Insufficient data samples. Keeping model as None.")
             self.model = None
             return
-            
+
         X = np.array(features_list)
         y = np.array(labels_list)
-        
-        # Train calibrated XGBoost
+
+        # Calculate class imbalance ratio for scale_pos_weight
+        n_neg = max(int(np.sum(y == 0)), 1)
+        n_pos = max(int(np.sum(y == 1)), 1)
+        scale_pos_weight = n_neg / n_pos
+        print(f"QuantMLClassifier: Label balance — Neg: {n_neg} | Pos: {n_pos} | scale_pos_weight: {scale_pos_weight:.1f}")
+
+        # Train calibrated XGBoost with imbalance correction
         xgb_base = XGBClassifier(
-            n_estimators=100,
-            max_depth=6,
-            learning_rate=0.1,
+            n_estimators=150,
+            max_depth=5,
+            learning_rate=0.08,
+            scale_pos_weight=scale_pos_weight,  # Corrects for rare positive labels
+            min_child_weight=3,                 # Prevents overfitting on rare positives
+            subsample=0.8,
+            colsample_bytree=0.8,
             random_state=42,
             eval_metric='logloss'
         )
-        
-        # CalibratedClassifierCV ensures predicted probability matches empirical frequency
+
         calibrated_xgb = CalibratedClassifierCV(estimator=xgb_base, method='sigmoid', cv=3)
         calibrated_xgb.fit(X, y)
-        
+
         self.model = calibrated_xgb
-        
+
         # Save model to disk
         try:
             with open(MODEL_PATH, "wb") as f:
                 pickle.dump(self.model, f)
-            print(f"QuantMLClassifier: Calibrated XGBoost Model trained on {len(X)} samples and saved to {MODEL_PATH}")
+            print(
+                f"QuantMLClassifier: Calibrated XGBoost Model trained on {len(X)} samples "
+                f"({n_pos} positives / {n_neg} negatives) and saved to {MODEL_PATH}"
+            )
+        except Exception as e:
+            print(f"QuantMLClassifier Warning: Could not save model to disk: {e}")
+
         except Exception as e:
             print(f"QuantMLClassifier Warning: Could not save model to disk: {e}")
 

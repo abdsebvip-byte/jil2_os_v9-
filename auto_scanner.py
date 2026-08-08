@@ -21,9 +21,16 @@ from database import QuantDatabase
 from alerts_tracker import get_active_halts, get_sec_filings_sentiment
 from decision_engine import DecisionEngine
 from daily_report import send_daily_closing_report
+from broker_bridge import AlpacaBrokerBridge
 
 # Simple in‑memory cache for SEC sentiment (expires after 4 hours)
 _sec_cache = {}
+
+# Daily alert limit tracker (anti-spam shield)
+ALERT_LIMIT_TRACKER = {
+    "date": datetime.now().strftime("%Y-%m-%d"),
+    "count": 0
+}
 
 
 def _env_int(name, default, minimum=1):
@@ -317,7 +324,7 @@ def start_scheduler():
                             if success:
                                 notified_halts.add(sym)
                                 recommended_halts.add(sym)
-                                db.log_alert_history(
+                                alert_id = db.log_alert_history(
                                     symbol=sym,
                                     price=price,
                                     score=score,
@@ -327,6 +334,20 @@ def start_scheduler():
                                     status="PENDING",
                                     initial_change=change
                                 )
+                                # Save features and score to signals database
+                                try:
+                                    ml_score, features = intel.calculate_ml_score(price_data, session, anomaly_info)
+                                    import zlib
+                                    blob = zlib.compress(features.tobytes())
+                                    with db.get_connection() as conn:
+                                        cursor = conn.cursor()
+                                        cursor.execute(
+                                            "INSERT OR REPLACE INTO signals (id, ts_utc, symbol, features, score, persisted) VALUES (?, ?, ?, ?, ?, 1)",
+                                            (int(alert_id), datetime.now().isoformat(), sym, blob, float(ml_score))
+                                        )
+                                        conn.commit()
+                                except Exception as db_ex:
+                                    logging.warning(f"Error saving halt alert features to signals db: {db_ex}")
                         except Exception as ex:
                             logging.warning(f"Error checking halt symbol {sym} price details: {ex}")
                             notified_halts.add(sym)
@@ -377,83 +398,111 @@ def start_scheduler():
                 
                 anomaly_map = intel.fit_anomaly_detector(raw_data, session)
                 
-                for quote in raw_data:
+                def process_candidate(quote):
                     try:
                         sym = quote.get("symbol")
-                        if not sym:
-                            continue
-                            
-                        # Exclude derivatives/warrants/SPAC units
-                        if len(sym) > 4 or sym.endswith(("U", "W", "R")):
-                            continue
-                            
-                        # Quick manual calculation of price and change to avoid redundant network calls
                         price = _safe_float(quote.get("regularMarketPrice"), 0.0)
-                        prev_close = _safe_float(quote.get("regularMarketPreviousClose"), price)
-                        change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else 0.0
+                        if price <= 0.0: return None
                         
-                        if session == "PRE_MARKET" and quote.get("preMarketPrice") is not None:
-                            price = _safe_float(quote.get("preMarketPrice"), price)
-                            change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else change
-                        elif session == "AFTER_HOURS" and quote.get("postMarketPrice") is not None:
-                            price = _safe_float(quote.get("postMarketPrice"), price)
-                            change = ((price - prev_close) / prev_close) * 100.0 if prev_close > 0 else change
-
-                        # Pre-filter checks to avoid sequential web requests for non-candidate stocks
+                        price, change, prev_close = intel._session_price_change(quote, session)
+                        
                         max_price_limit = 50.0 if session in ["PRE_MARKET", "AFTER_HOURS", "NIGHT_CLOSED"] else 20.0
-                        if not (0.1 <= price <= max_price_limit):
-                            continue
-                            
-                        if not (3.0 <= change <= 60.0):
-                            continue
+                        if not (0.1 <= price <= max_price_limit): return None
+                        if not (1.5 <= change <= 60.0): return None
                             
                         float_shares = _safe_float(quote.get("float_shares_outstanding") or quote.get("floatShares"), 10000000.0)
                         thresholds = intel.get_thresholds()
-                        if float_shares > thresholds.get("float_max", 30000000.0):
-                            continue
+                        if float_shares > thresholds.get("float_max", 30000000.0): return None
+                            
+                        if session == "PRE_MARKET":
+                            volume = _safe_float(quote.get("preMarketVolume") or quote.get("regularMarketVolume"), 0.0)
+                        elif session == "AFTER_HOURS":
+                            volume = _safe_float(quote.get("postMarketVolume") or quote.get("regularMarketVolume"), 0.0)
+                        else:
+                            volume = _safe_float(quote.get("regularMarketVolume"), 0.0)
+                            
+                        value_traded = _safe_float(quote.get("value_traded"), 0.0)
+                        if value_traded <= 0.0:
+                            value_traded = price * volume
+                            
+                        if session in ["PRE_MARKET", "AFTER_HOURS", "NIGHT_CLOSED"]:
+                            min_vol, min_val, rvol_limit = 50000.0, 100000.0, 0.15
+                        else:
+                            min_vol, min_val, rvol_limit = 150000.0, 250000.0, thresholds.get("rvol_min", 3.0)
+                            
+                        if volume < min_vol or value_traded < min_val: return None
                             
                         avg_volume = _safe_float(quote.get("averageDailyVolume3Month"), 100000.0)
-                        volume = _safe_float(quote.get("regularMarketVolume"), 0.0)
                         rvol = volume / avg_volume if avg_volume > 0 else 1.0
-                        rvol_limit = thresholds.get("rvol_min", 2.0)
-                        if session in ["PRE_MARKET", "AFTER_HOURS", "NIGHT_CLOSED"]:
-                            rvol_limit = 0.05
-                        if rvol < rvol_limit:
-                            continue
+                        if rvol < rvol_limit: return None
 
-                        # Fetch news catalyst (SEC Form 4 or 8-K) only for active candidates to avoid rate limits
+                        # --- SLOW NETWORK CALLS START HERE (Now running in parallel!) ---
                         sec_sentiment = get_sec_filings_sentiment(sym)
                         anomaly_info = anomaly_map.get(sym, {"is_anomaly": False, "confidence_score": 1.0})
                         
                         is_yahoo = sym in yahoo_trending
                         is_reddit = sym in reddit_trending
-                        is_trending = is_yahoo or is_reddit
                         
-                        # 1. تقييم السهم عبر محرك القرار المركزي
+                        price_check, change_check, _ = intel._session_price_change(quote, session)
+                        internal_trending = rvol >= 3.0 and change_check >= 3.0
+                        is_trending = (is_yahoo or is_reddit) and internal_trending
+                        
+                        is_consolidating = intel.calculate_volatility_squeeze(sym)
                         engine = DecisionEngine()
                         trace = engine.evaluate_symbol(
-                            quote=quote,
-                            session=session,
-                            anomaly_info=anomaly_info,
-                            sec_sentiment=sec_sentiment,
-                            is_trending=is_trending
+                            quote=quote, session=session, anomaly_info=anomaly_info,
+                            sec_sentiment=sec_sentiment, is_trending=is_trending,
+                            is_consolidating=is_consolidating
                         )
                         
-                        # 2. تسجيل القرار كاملاً في قاعدة البيانات (سواء مقبول أو مستبعد)
-                        db.log_evaluation_trace(
-                            symbol=sym,
-                            price=trace["price"],
-                            change=trace["change"],
-                            rvol=trace["rvol"],
-                            score=trace["score"],
-                            ml_prob=trace["ml_prob"],
-                            status=trace["status"],
-                            reason=trace["rejection_reason"],
-                            details=trace["details"]
-                        )
-                        
-                        # 3. إرسال تنبيه في حال القبول فقط
+                        accepted_dict = None
                         if trace["status"] == "ACCEPTED":
+                            accepted_dict = {
+                                "symbol": sym, "trace": trace, "quote": quote,
+                                "anomaly_info": anomaly_info, "sec_sentiment": sec_sentiment,
+                                "is_trending": is_trending, "price": price, "change": change
+                            }
+                        return (sym, trace, accepted_dict)
+                    except Exception as e:
+                        logging.warning(f"Background Scanner Symbol Processing Error: {e}")
+                        return None
+
+                accepted_candidates = []
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+                    results = list(executor.map(process_candidate, raw_data))
+                    
+                for res in results:
+                    if res:
+                        sym, trace, accepted_dict = res
+                        db.log_evaluation_trace(
+                            symbol=sym, price=trace["price"], change=trace["change"],
+                            rvol=trace["rvol"], score=trace["score"], ml_prob=trace["ml_prob"],
+                            status=trace["status"], reason=trace["rejection_reason"], details=trace["details"]
+                        )
+                        if accepted_dict:
+                            accepted_candidates.append(accepted_dict)
+                
+                # --- طابور الترتيب والمفاضلة اللحظي (Binned Ranking Queue) ---                # --- طابور الترتيب والمفاضلة اللحظي (Binned Ranking Queue) ---
+                if accepted_candidates:
+                    # ترتيب المرشحين بناءً على درجة اليقين والـ ML والـ change
+                    accepted_candidates.sort(key=lambda x: (x["trace"]["score"], x["trace"]["ml_prob"], x["change"]), reverse=True)
+                    
+                    # اختيار أقوى 3 مرشحين فقط
+                    top_candidates = accepted_candidates[:3]
+                    logging.info(f"AutoScanner Queue: Selected top {len(top_candidates)} out of {len(accepted_candidates)} accepted symbols in this cycle.")
+                    
+                    for cand in top_candidates:
+                        try:
+                            sym = cand["symbol"]
+                            trace = cand["trace"]
+                            quote = cand["quote"]
+                            anomaly_info = cand["anomaly_info"]
+                            sec_sentiment = cand["sec_sentiment"]
+                            is_trending = cand["is_trending"]
+                            price = cand["price"]
+                            change = cand["change"]
+                            
                             logging.info(f"AutoScanner: Symbol {sym} ACCEPTED. Starting alert dispatch...")
                             # 🛡️ حظر التنبيهات اللحظية أثناء إغلاق البورصة في الليل وعطلة نهاية الأسبوع
                             if session == "NIGHT_CLOSED":
@@ -495,14 +544,15 @@ def start_scheduler():
                                 notes += "\n📝 *حدث جوهري:* تم رصد أخبار أو شراكة جديدة (Form 8-K)!"
                                 
                             # Add custom notes for popularity
-                            if is_yahoo and is_reddit:
-                                notes += "\n🔥 *الشهرة والبحث:* عليه بحث ونقاش مكثف جداً في ياهو وريديت!"
-                            elif is_yahoo:
-                                notes += "\n📈 *الشهرة والبحث:* بحث نشط على ياهو فاينانس!"
-                            elif is_reddit:
-                                notes += "\n💬 *الشهرة والبحث:* نقاش متداول في منتدى ريديت!"
-                                
-                            target_pct = intel.calculate_dynamic_target(score, ml_prob, quote=quote)
+                            if is_trending:
+                                if sym in yahoo_trending and sym in reddit_trending:
+                                    notes += "\n🔥 *الشهرة والبحث:* عليه بحث ونقاش مكثف جداً في ياهو وريديت!"
+                                elif sym in yahoo_trending:
+                                    notes += "\n📈 *الشهرة والبحث:* بحث نشط على ياهو فاينانس!"
+                                elif sym in reddit_trending:
+                                    notes += "\n💬 *الشهرة والبحث:* نقاش متداول في منتدى ريديت!"
+                                    
+                            target_pct = intel.calculate_dynamic_target(score, ml_prob, quote=quote, details=trace.get("details", {}))
                             
                             action_lbl = intel.get_execution_directive(
                                 quote=quote,
@@ -520,7 +570,7 @@ def start_scheduler():
                                 header_text = "⚠️ *رصد حركة متقدمة (دخول بحذر — Limit Order فقط!)* ⚠️"
                                 action_lbl = f"⚠️ أمر محدد فقط (Limit Order) بسعر `${price * 0.98:.4f}` أو أقل (ممنوع الشراء بسعر السوق ماركت!)"
                                 risk_label = "🔴 مخاطرة عالية (ارتفاع مسبق)"
-                                risk_note = f"🛑 *تحذير صارم:* السهم مرتفع بالفعل `+{change:.1f}%` — **ممنوع تماماً الشراء بسعر السوق (Market Order)** لتجنب الانزلاق والهبوط المفاجئ! ادخل فقط بأمر محدد بسعر أقل من الحالي."
+                                risk_note = f"🛑 *تحذير صارم:* السهم مرتفع بالفعل `+{change:.1f}%` — **ممنوع تماماً الشراء بسعر السوق (Market Order)** لتجنب الانزلاق والهبوط المفائئ! ادخل فقط بأمر محدد بسعر أقل من الحالي."
                             elif change >= 18.0:
                                 header_text = "🎯 *فرصة انفجار سعري مكتشفة!* 🚀"
                                 risk_label = "🟡 مخاطرة متوسطة"
@@ -556,41 +606,62 @@ def start_scheduler():
                                 f"📌 *هذه منصة رصد وبحث — قرار التداول مسؤوليتك الكاملة.*"
                             )
                             
-                            success = notifier.send_custom_message(alert_msg)
-                            if success:
-                                logging.info(f"AutoScanner: Alert message for {sym} sent successfully to Telegram.")
-                                db.log_sent_alert(sym)
-                                alert_id = db.log_alert_history(
-                                    symbol=sym,
-                                    price=price,
-                                    score=score,
-                                    alert_type="شراء فوري بسعر السوق (رادار)",
-                                    session=session,
-                                    target_percent=target_pct,
-                                    status="PENDING",
-                                    initial_change=change
-                                )
-                            else:
-                                logging.error(f"AutoScanner: Alert message for {sym} failed to send to Telegram (notifier returned False).")
-                                # Save features and score to signals database
-                                try:
-                                    # Calculate ML score and get features
-                                    ml_score, features = intel.calculate_ml_score(quote, session, anomaly_info)
-                                    import zlib
-                                    blob = zlib.compress(features.tobytes())
-                                    with db.get_connection() as conn:
-                                        cursor = conn.cursor()
-                                        cursor.execute(
-                                            "INSERT INTO signals (id, ts_utc, symbol, features, score, persisted) VALUES (?, ?, ?, ?, ?, 1)",
-                                            (alert_id, datetime.now().isoformat(), sym, blob, float(ml_score))
-                                        )
-                                        conn.commit()
-                                except Exception as db_ex:
-                                    logging.warning(f"Error saving alert features to signals db: {db_ex}")
+                            # Log alert history first (returns alert_id)
+                            alert_id = db.log_alert_history(
+                                symbol=sym,
+                                price=price,
+                                score=score,
+                                alert_type="شراء فوري بسعر السوق (رادار)",
+                                session=session,
+                                target_percent=target_pct,
+                                status="PENDING",
+                                initial_change=change
+                            )
+                            # Save features and score to signals database for ALL alerts
+                            try:
+                                # ml_prob is already computed by DecisionEngine — use it directly
+                                import zlib, numpy as _np
+                                features_arr = _np.array([price, change, rvol, 5.0, 1.0, 0.0], dtype=_np.float32)
+                                blob = zlib.compress(features_arr.tobytes())
+                                with db.get_connection() as conn:
+                                    cursor = conn.cursor()
+                                    cursor.execute(
+                                        "INSERT OR REPLACE INTO signals (id, ts_utc, symbol, features, score, persisted) VALUES (?, ?, ?, ?, ?, 1)",
+                                        (int(alert_id), datetime.now().isoformat(), sym, blob, float(ml_prob))
+                                    )
+                                    conn.commit()
+                            except Exception as db_ex:
+                                logging.warning(f"Error saving alert features to signals db: {db_ex}")
+
+
+
+                            # Now try to send to Telegram (with daily limit protection)
+                            current_date = datetime.now().strftime("%Y-%m-%d")
+                            if ALERT_LIMIT_TRACKER["date"] != current_date:
+                                ALERT_LIMIT_TRACKER["date"] = current_date
+                                ALERT_LIMIT_TRACKER["count"] = 0
                                 
-                    except Exception as e:
-                        logging.warning(f"Background Scanner Symbol Processing Error for {sym}: {e}")
-                        continue
+                            if ALERT_LIMIT_TRACKER["count"] >= 15:
+                                logging.warning(f"AutoScanner: Daily alert limit reached (15). Suppressing alert for {sym}.")
+                            else:
+                                success = notifier.send_custom_message(alert_msg)
+                                if success:
+                                    ALERT_LIMIT_TRACKER["count"] += 1
+                                    logging.info(f"AutoScanner: Alert message for {sym} sent successfully to Telegram. Count: {ALERT_LIMIT_TRACKER['count']}")
+                                    db.log_sent_alert(sym)
+                                    
+                                    # --- AUTOTRADING ORDER EXECUTION BRIDGE ---
+                                    try:
+                                        bridge = AlpacaBrokerBridge()
+                                        bridge.place_bracket_order(sym, price, target_pct)
+                                    except Exception as bridge_ex:
+                                        logging.error(f"AutoScanner: Failed to place Alpaca order for {sym}: {bridge_ex}")
+                                else:
+                                    logging.error(f"AutoScanner: Alert message for {sym} failed to send to Telegram (notifier returned False).")
+                                    
+                        except Exception as cand_ex:
+                            logging.warning(f"AutoScanner Queue: Error processing accepted candidate {sym}: {cand_ex}")
+                            continue
                         
             # Sleep 60 seconds for next halts check
             try:

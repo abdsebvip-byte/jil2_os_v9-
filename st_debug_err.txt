@@ -1,0 +1,12 @@
+2026-08-07 16:33:25.039 No ASGI app assignments found in C:\Users\sahar\.gemini\antigravity\scratch\jil2_os_v9\app_v10.py
+2026-08-07 16:33:25.787 Filtered 98 packages down to 1 candidates for component scanning
+2026-08-07 16:33:25.796 Scanning 1 candidate packages for component manifests using 1 worker threads
+2026-08-07 16:33:26.105 Found 0 component manifests total
+2026-08-07 16:33:26.112 No asset roots to watch
+2026-08-07 16:33:26.114 File watching not started
+2026-08-07 16:33:26.116 Starting new event loop for server
+2026-08-07 16:33:26.118 Starting server...
+2026-08-07 16:33:26.258 Starting uvicorn server on :::8502
+2026-08-07 16:33:26.363 Runtime state: RuntimeState.INITIAL -> RuntimeState.NO_SESSIONS_CONNECTED
+2026-08-07 16:33:26.365 Uvicorn server started on :::8502
+2026-08-07 16:33:27.104 Setting up signal handler

@@ -11,7 +11,7 @@ class DecisionEngine:
         self.intel = QuantIntelligence()
         self.ml_classifier = QuantMLClassifier()
         
-    def evaluate_symbol(self, quote, session, anomaly_info, sec_sentiment, is_trending=False, f_info=None):
+    def evaluate_symbol(self, quote, session, anomaly_info, sec_sentiment, is_trending=False, f_info=None, is_consolidating=False):
         """
         Evaluate a single stock symbol and return a decision trace dictionary.
         """
@@ -21,14 +21,24 @@ class DecisionEngine:
         # 1. basic features extraction
         price, change, prev_close = self.intel._session_price_change(quote, session)
         if session == "PRE_MARKET":
-            volume = self.intel._safe_float(quote.get("preMarketVolume") or quote.get("regularMarketVolume"), 0.0)
+            volume = self.intel._safe_float(quote.get("preMarketVolume") if quote.get("preMarketVolume") is not None else 0.0, 0.0)
         elif session == "AFTER_HOURS":
-            volume = self.intel._safe_float(quote.get("postMarketVolume") or quote.get("regularMarketVolume"), 0.0)
+            volume = self.intel._safe_float(quote.get("postMarketVolume") if quote.get("postMarketVolume") is not None else 0.0, 0.0)
         else:
             volume = self.intel._safe_float(quote.get("regularMarketVolume"), 0.0)
             
         avg_volume = self.intel._safe_float(quote.get("averageDailyVolume3Month"), 100000.0)
-        rvol = volume / avg_volume if avg_volume > 0 else 1.0
+        
+        # Calculate Time-Adjusted RVOL
+        if session == "REGULAR_SESSION":
+            elapsed_fraction = self.intel._get_regular_market_elapsed_fraction()
+            expected_avg_vol = avg_volume * elapsed_fraction
+            rvol = volume / expected_avg_vol if expected_avg_vol > 0 else 1.0
+        elif session in ["PRE_MARKET", "AFTER_HOURS", "NIGHT_CLOSED"]:
+            expected_ext_vol = avg_volume * 0.05
+            rvol = volume / expected_ext_vol if expected_ext_vol > 0 else 1.0
+        else:
+            rvol = volume / avg_volume if avg_volume > 0 else 1.0
         
         # Default historical features if not provided
         if f_info is None:
@@ -83,17 +93,15 @@ class DecisionEngine:
             session=session,
             anomaly_info=anomaly_info,
             sec_sentiment=sec_sentiment,
-            is_trending=is_trending
+            is_trending=is_trending,
+            is_consolidating=is_consolidating
         )
-        
-        # Boost conviction score for positive catalysts
-        if sec_sentiment:
-            if sec_sentiment.get("insider_buy"):
-                score = min(100, score + 15)
-            if sec_sentiment.get("material_news"):
-                score = min(100, score + 10)
+        # NOTE: SEC catalyst bonuses (insider_buy +10, material_news +15) are already applied
+        # inside calculate_7_layer_conviction in intelligence.py — do NOT re-apply them here.
+        # Only apply the is_trending boost which is a decision_engine-level context signal.
         if is_trending and score >= 70:
             score = min(100, score + 10)
+
             
         # Build initial trace structure
         trace = {
@@ -124,19 +132,37 @@ class DecisionEngine:
             trace["rejection_reason"] = f"السعر خارج النطاق الآمن ($0.1 - ${max_price_limit})"
             return trace
             
-        # Rule C: Daily Change boundaries (ideal discovery range)
-        if change < 3.0:
+        # Rule B2: Liquidity Floor Check
+        value_traded = self.intel._safe_float(quote.get("value_traded"), 0.0)
+        if value_traded <= 0.0:
+            value_traded = price * volume
+            
+        if session in ["PRE_MARKET", "AFTER_HOURS", "NIGHT_CLOSED"]:
+            min_volume = 50000.0
+            min_value_traded = 100000.0
+        else:
+            min_volume = 150000.0
+            min_value_traded = 250000.0
+            
+        if volume < min_volume or value_traded < min_value_traded:
             trace["status"] = "REJECTED"
-            trace["rejection_reason"] = f"نسبة الارتفاع اليومي منخفضة جداً (+{change:.1f}% < +3%)"
+            trace["rejection_reason"] = f"شح السيولة وحجم التداول (الحجم: {volume:,.0f} < {min_volume:,.0f} | القيمة: ${value_traded:,.0f} < ${min_value_traded:,.0f})"
+            return trace
+            
+        # Rule C: Daily Change boundaries (ideal discovery range)
+        min_change_limit = 5.0 if session == "REGULAR_SESSION" else 4.0
+        if change < min_change_limit:
+            trace["status"] = "REJECTED"
+            trace["rejection_reason"] = f"نسبة الارتفاع اليومي منخفضة جداً (+{change:.1f}% < +{min_change_limit}%)"
             return trace
         if change > 60.0:
             trace["status"] = "REJECTED"
             trace["rejection_reason"] = f"السهم منفجر بالفعل ومتضخم سعرياً (+{change:.1f}% > +60%) — فوات منطقة الدخول الآمنة تجنباً للهبوط الحاد (FOMO)"
             return trace
-        if change > 30.0 and not has_catalyst:
-            if score < 85 or ml_prob < 75.0:
+        if change > 20.0 and not has_catalyst:
+            if score < 85 or ml_prob < 15.0:
                 trace["status"] = "REJECTED"
-                trace["rejection_reason"] = f"ارتفاع مسبق مرتفع (+{change:.1f}%) بدون محفز قوي — يتطلب قناعة فائقة (Score >= 85 & ML >= 75%)"
+                trace["rejection_reason"] = f"ارتفاع مسبق مرتفع (+{change:.1f}%) بدون محفز قوي — يتطلب قناعة فائقة (Score >= 85 & ML >= 15%)"
                 return trace
             
         # Rule D: Float shares check
@@ -149,7 +175,7 @@ class DecisionEngine:
         # Rule E: RVOL check
         rvol_limit = thresholds.get("rvol_min", 4.0)
         if session in ["PRE_MARKET", "AFTER_HOURS", "NIGHT_CLOSED"]:
-            rvol_limit = 0.05  # lower RVOL for extended sessions
+            rvol_limit = 0.15  # raise RVOL limit from 0.05 to 0.15 for extended sessions
         if rvol < rvol_limit:
             trace["status"] = "REJECTED"
             trace["rejection_reason"] = f"حجم التداول النسبي RVOL منخفض جداً ({rvol:.2f}x < {rvol_limit:.2f}x)"
@@ -161,22 +187,69 @@ class DecisionEngine:
             trace["rejection_reason"] = "مخاطر تخفيف حادة (تم رصد إعلان تسجيل طرح أسهم S-1)"
             return trace
             
-        # Rule G: Conviction and ML Classifier decision
-        # We accept if score >= 80, OR if Supernova FTAI/Volatility Squeeze detected at score >= 75, OR if ML model probability is high >= 80%
-        min_score = 80
-        is_supernova_early = bool(details.get("Supernova_FTAI_Early") or details.get("Volatility_Squeeze_Coil"))
-        
-        if score < min_score:
-            if is_supernova_early and score >= 75:
-                trace["status"] = "ACCEPTED"
-                trace["rejection_reason"] = f"اكتشاف مبكر مؤكد لانفجار خارق في القاع (Supernova FTAI / Volatility Squeeze)"
-            elif ml_prob >= 80.0:
-                # ML Override: Accept the breakout despite lower manual score!
-                trace["status"] = "ACCEPTED"
-                trace["rejection_reason"] = f"تم التمرير استثنائياً بقوة الذكاء الاصطناعي (ML: {ml_prob:.1f}%)"
+        # --- PM ARCHITECTURE UPGRADE 2: Micro-Momentum Tape Filter ---
+        # We run this live tick request only for final candidates to save API hits.
+        is_exploding = self.intel.check_micro_momentum(sym, avg_volume)
+        if not is_exploding:
+            trace["status"] = "REJECTED"
+            trace["rejection_reason"] = "شح السيولة اللحظية (Micro-Momentum): لا يوجد هجوم شرائي في آخر 5 دقائق، السهم يتحرك ببطء."
+            return trace
+
+        # Rule T: Daily Trend Alignment Guard
+        # We only run the yfinance HTTP request for final candidates to prevent rate limits!
+        is_daily_aligned = self.intel.check_daily_trend_alignment(sym, price)
+        if not is_daily_aligned:
+            # Apply a strict penalty of -30 unless we have Tier-1 material news news catalyst
+            is_material_news = isinstance(sec_sentiment, dict) and bool(sec_sentiment.get("material_news"))
+            if not is_material_news:
+                score -= 30
+                details["Daily_Trend_Alignment"] = False
             else:
+                score += 5  # Small boost for fighting trend with news catalyst
+                details["Daily_Trend_Alignment"] = "FIGHTING_WITH_CATALYST"
+        else:
+            score += 10  # Boost for matching daily trend
+            details["Daily_Trend_Alignment"] = True
+            
+        score = max(0, min(100, score))
+        trace["score"] = score
+        trace["details"] = details
+
+        # Rule G: Conviction and ML Classifier decision
+        # Smart flexible thresholds — not a rigid 80-point cliff:
+        # - Base minimum: 80 points (no catalyst)
+        # - Catalyst reduction: 75 points if backed by confirmed news (material_news or insider_buy)
+        # - Supernova exception: 75 points if FTAI/Volatility Squeeze detected
+        # - ML Override: 65% ML probability can lower the threshold by 5 more points
+        has_news_catalyst = bool(
+            isinstance(sec_sentiment, dict) and
+            (sec_sentiment.get("material_news") or sec_sentiment.get("insider_buy"))
+        )
+        is_supernova_early = bool(details.get("Supernova_FTAI_Early") or details.get("Volatility_Squeeze_Coil"))
+
+        # Determine effective minimum score based on context
+        if has_news_catalyst or is_supernova_early:
+            effective_min_score = 75  # News or squeeze lowers the bar slightly
+        else:
+            effective_min_score = 80  # No catalyst: strict 80 required
+
+        # ML high confidence can lower the bar by 5 more points
+        if ml_prob >= 65.0:
+            effective_min_score = max(70, effective_min_score - 5)
+
+        if score < effective_min_score:
+            # Hard floor: Even if ML is confident, don't accept garbage (score < 65)
+            if ml_prob >= 80.0 and score >= 65:
+                # ML Override: strong model confidence overrides manual score
+                trace["status"] = "ACCEPTED"
+                trace["rejection_reason"] = f"تم التمرير بقوة الذكاء الاصطناعي (ML: {ml_prob:.1f}%) رغم قناعة متوسطة"
+            else:
+                context = "مع محفز" if has_news_catalyst else ("مع انفجار صامت" if is_supernova_early else "بدون محفز")
                 trace["status"] = "REJECTED"
-                trace["rejection_reason"] = f"قناعة منخفضة (Score: {score}% < 80% | ML: {ml_prob:.1f}% < 80%)"
+                trace["rejection_reason"] = (
+                    f"قناعة منخفضة ({context}) — Score: {score} < {effective_min_score} | ML: {ml_prob:.1f}%"
+                )
                 return trace
 
         return trace
+

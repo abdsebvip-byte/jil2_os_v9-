@@ -37,6 +37,18 @@ class QuantIntelligence:
             "min_value_traded": float(os.getenv("MIN_VALUE_TRADED", 250000.0)),
         }
 
+    def _session_volume(self, quote, session):
+        volume = self._safe_float(quote.get("regularMarketVolume"), 0.0)
+        
+        if session == "PRE_MARKET":
+            pre_vol = self._safe_float(quote.get("preMarketVolume"), 0.0)
+            if pre_vol > 0: volume = pre_vol
+        elif session == "AFTER_HOURS":
+            post_vol = self._safe_float(quote.get("postMarketVolume"), 0.0)
+            if post_vol > 0: volume = post_vol
+            
+        return volume
+
     def _session_price_change(self, quote, session):
         price = self._safe_float(quote.get("regularMarketPrice"), 0.0)
         prev_close = self._safe_float(quote.get("regularMarketPreviousClose"), price)
@@ -61,7 +73,7 @@ class QuantIntelligence:
         for q in raw_quotes:
             try:
                 price, change, _ = self._session_price_change(q, session)
-                volume = self._safe_float(q.get("regularMarketVolume"), 0.0)
+                volume = self._session_volume(q, session)
                 avg_vol = self._safe_float(q.get("averageDailyVolume3Month"), 100000.0)
                 float_shares = self._safe_float(q.get("float_shares_outstanding"), 15000000.0)
                 rvol = volume / avg_vol if avg_vol > 0 else 1.0
@@ -133,7 +145,7 @@ class QuantIntelligence:
             weights, bias = db.load_latest_model_weights(num_features=6)
             
             price, price_change, prev_close = self._session_price_change(quote, session)
-            volume = self._safe_float(quote.get("regularMarketVolume"), 0.0)
+            volume = self._session_volume(quote, session)
             bid = self._safe_float(quote.get("bid"), price)
             ask = self._safe_float(quote.get("ask"), price)
             
@@ -171,139 +183,85 @@ class QuantIntelligence:
             conf = float(anomaly_info.get("confidence_score", 5.0) if anomaly_info else 5.0)
             return conf * 10.0, np.zeros(6, dtype=np.float32)
 
-    def calculate_7_layer_conviction(self, quote, session, anomaly_info, sec_sentiment=None, is_trending=False):
+    def calculate_7_layer_conviction(self, quote, session, anomaly_info, sec_sentiment=None, is_trending=False, is_consolidating=False):
         """
-        Calculate a 0-100 conviction score for early explosive-stock setups.
+        Data-Driven Scoring Engine (Based on missed_gainers_report & historical audit)
+        - Removed 35% FOMO block (stocks can go up to 100%+ and still be scored)
+        - RVOL accepted down to 2.0x (for silent accumulation detection)
+        - No arbitrary 'impossible' constraints. Real supernovas get 95-100%.
         """
         score = 0
         details = {}
         thresholds = self.get_thresholds()
 
         price, price_change, prev_close = self._session_price_change(quote, session)
-        open_price = self._safe_float(quote.get("regularMarketOpen"), price)
-
-        # فلتر السعر — الجلسات الممتدة تقبل حتى $50
-        is_extended = session in ["PRE_MARKET", "AFTER_HOURS", "NIGHT_CLOSED"]
-        if 0.0 < price <= 20.0:
-            score += 15
-            details["Price_Filter"] = True
-        elif is_extended and 20.0 < price <= 50.0:
-            score += 8  # نقاط جزئية للأسهم المتوسطة في الجلسات الممتدة
-            details["Price_Filter"] = "EXTENDED_RANGE"
-        else:
-            details["Price_Filter"] = False
-
-        # Catalyst-Adjusted Gap and Fomo Limits
-        gap_limit = thresholds["gap"]
-        fomo_limit = thresholds["fomo"]
-        if isinstance(sec_sentiment, dict) and (sec_sentiment.get("insider_buy") or sec_sentiment.get("material_news")):
-            gap_limit = max(gap_limit, 45.0)
-            fomo_limit = max(fomo_limit, 75.0)
-
-        gap = ((open_price - prev_close) / prev_close) * 100.0 if prev_close > 0 else 0.0
-        if abs(gap) <= gap_limit:
-            score += 15
-            details["Gap_Shield"] = True
-        else:
-            details["Gap_Shield"] = False
-
-        if 5.0 <= price_change <= 15.0:
-            score += 20
-            details["Early_Breakout"] = "IDEAL"
-        elif 15.0 < price_change <= 30.0:
-            score += 10
-            details["Early_Breakout"] = "HIGH"
-        elif 30.0 < price_change <= fomo_limit:
-            score -= 5  # عقوبة للتضخم السعري وفوات منطقة الشراء الآمنة
-            details["Early_Breakout"] = "EXTENDED_RISK"
-        elif price_change > fomo_limit:
-            score -= 10  # عقوبة قاسية لمنع الـ FOMO بالكامل
-            details["Early_Breakout"] = "FOMO_BLOCKED"
-        else:
-            details["Early_Breakout"] = "LOW_CHANGE"
-
-        volume = self._safe_float(quote.get("regularMarketVolume"), 0.0)
+        volume = self._session_volume(quote, session)
         avg_volume = self._safe_float(quote.get("averageDailyVolume3Month"), 100000.0)
+        float_shares = self._safe_float(quote.get("float_shares_outstanding") or quote.get("floatShares"), 15000000.0)
+        
         rvol = volume / avg_volume if avg_volume > 0 else 1.0
-        if rvol >= thresholds["rvol_min"]:
-            score += 20
-            details["RVOL_Acceleration"] = True
-        elif rvol >= thresholds["rvol_min"] * 0.75:
-            score += 8
-            details["RVOL_Acceleration"] = "WEAK"
-        else:
-            details["RVOL_Acceleration"] = False
-
-        value_traded = self._safe_float(quote.get("value_traded"), 0.0)
-        vwap = self._safe_float(quote.get("vwap"), 0.0)
-        whale_limit = thresholds["whale_ext"] if session in ["PRE_MARKET", "AFTER_HOURS"] else thresholds["whale_reg"]
-        if value_traded > 0.0 and vwap > 0.0:
-            if value_traded >= whale_limit and price >= vwap:
-                score += 15
-                details["Whale_Block"] = True
-            else:
-                details["Whale_Block"] = False
-        elif rvol >= thresholds["rvol_min"]:
-            score += 15
-            details["Whale_Block"] = True
-        else:
-            details["Whale_Block"] = False
-
-        bid_size = self._safe_float(quote.get("bidSize"), 0.0)
-        ask_size = self._safe_float(quote.get("askSize"), 0.0)
-        bid = self._safe_float(quote.get("bid"), price)
-        ask = self._safe_float(quote.get("ask"), price)
-        obi = (bid_size - ask_size) / (bid_size + ask_size) if (bid_size + ask_size) > 0 else 0.0
-        spread_bps = ((ask - bid) / price) * 10000.0 if price > 0 and ask >= bid else 0.0
-        if obi >= 0.15 and spread_bps <= thresholds["max_spread_bps"]:
-            score += 10
-            details["OBI_Imbalance"] = True
-        else:
-            details["OBI_Imbalance"] = False
-        details["Spread_Bps"] = round(spread_bps, 1)
-
-        supply_score, supply_details = self.calculate_supply_pressure(quote, rvol)
-        score += supply_score
-        details.update(supply_details)
-
-        anomaly_conf = self._safe_float(anomaly_info.get("confidence_score") if anomaly_info else 0.0, 0.0)
-        if anomaly_info and anomaly_info.get("is_anomaly") and anomaly_conf >= 5.0:
-            score += 5
-            details["Anomaly_Confirmation"] = True
-        else:
-            details["Anomaly_Confirmation"] = False
-
-        # Retail Popularity/Trending Boost (v24.8)
-        if is_trending:
-            score += 8
-            details["Retail_Trending_Boost"] = True
-        else:
-            details["Retail_Trending_Boost"] = False
-
-        # 🚀 8. مؤشر سرعة دوران الفلوت الخارق (Float Turnover Acceleration Index - FTAI)
-        float_shares = self._safe_float(
-            quote.get("float_shares_outstanding") or quote.get("floatShares"),
-            10000000.0
-        )
         ftai = (volume / float_shares * rvol) if float_shares > 0 else 0.0
         details["FTAI_Score"] = round(ftai, 2)
 
-        if float_shares < 5000000.0 and ftai >= 0.8 and 1.5 <= price_change <= 12.0:
-            score += 25  # مكافأة صيد الانفجار الخارق الفوري في القاع
-            details["Supernova_FTAI_Early"] = True
-        elif float_shares < 10000000.0 and ftai >= 0.4 and 1.5 <= price_change <= 15.0:
+        # 1. Base Setup Score
+        if float_shares < 10000000.0 and 2.0 <= price_change <= 20.0:
+            score += 35
+            details["Base_Setup"] = "PRIME_LOW_FLOAT"
+        elif float_shares < 20000000.0 and 1.5 <= price_change <= 50.0:
+            score += 25
+            details["Base_Setup"] = "MID_FLOAT_OR_RUNNING"
+        else:
             score += 15
-            details["Supernova_FTAI_Early"] = "MEDIUM"
-        else:
-            details["Supernova_FTAI_Early"] = False
+            details["Base_Setup"] = "STANDARD_BASE"
+            
+        # 2. RVOL Multiplier (Data-Driven: 2.0x is minimum for accumulation)
+        if rvol < 2.0:
+            score -= 20  # Only penalize if completely dead (<2.0x)
+            details["RVOL_Acceleration"] = "DEAD_STOCK_PENALTY"
+        elif rvol > 5.0:
+            score += 35
+            details["RVOL_Acceleration"] = "MASSIVE"
+        elif rvol > 3.0:
+            score += 25
+            details["RVOL_Acceleration"] = "HIGH"
+        elif rvol >= 2.0:
+            score += 15
+            details["RVOL_Acceleration"] = "ACCUMULATION_MODERATE"
+            
+        # 3. Tape Acceleration (FTAI)
+        if ftai > 1.0:
+            score += 20
+            details["Tape_Acceleration"] = "HYPER_ACTIVE"
+        elif ftai > 0.4:
+            score += 10
+            details["Tape_Acceleration"] = "ACTIVE"
 
-        # 🌀 9. مؤشر انكماش التذبذب ورصد الانفجار الصامت (Volatility Squeeze Coiling Engine)
-        if 1.5 <= price_change <= 8.0 and rvol >= 3.0:
-            score += 20  # مكافأة رصد تجميع السيولة الصامتة قبل القفزة الفجائية
-            details["Volatility_Squeeze_Coil"] = True
-        else:
-            details["Volatility_Squeeze_Coil"] = False
+        # 4. FOMO/Extended Price (Removed 35% harsh penalty based on audit)
+        if price_change > 150.0:
+            score -= 10  # Only penalize extreme 150%+ chasing
+            details["FOMO_Penalty"] = True
 
+        # 5. Catalyst / Gap Shield Logic
+        open_price = self._safe_float(quote.get("regularMarketOpen"), price)
+        gap = ((open_price - prev_close) / prev_close) * 100.0 if prev_close > 0 else 0.0
+        gap_limit = 20.0
+        has_catalyst = isinstance(sec_sentiment, dict) and sec_sentiment.get("material_news")
+        
+        if has_catalyst:
+            gap_limit = 100.0  # Dynamic gap shield from missed_gainers_report
+            score += 10
+            details["Catalyst"] = True
+            
+        if abs(gap) > gap_limit:
+            score -= 15
+            details["Gap_Penalty"] = True
+            
+        if anomaly_info and anomaly_info.get("is_anomaly"):
+            score += 5
+            
+        if is_trending:
+            score += 5
+            
         final_score = max(0, min(100, score))
         return final_score, details, price, price_change, rvol
 
@@ -419,7 +377,7 @@ class QuantIntelligence:
             return "LIQ_MEDIUM", "💧 سيولة نقدية متوسطة", "$1.0M"
 
         price = self._safe_float(quote.get("regularMarketPrice"), 0.0)
-        volume = self._safe_float(quote.get("regularMarketVolume"), 0.0)
+        volume = self._session_volume(quote, session)
         dollar_vol = price * volume
 
         formatted_vol = f"${dollar_vol/1000000.0:.2f}M" if dollar_vol >= 1000000.0 else f"${dollar_vol/1000.0:.0f}K"
@@ -438,3 +396,32 @@ class QuantIntelligence:
         if rvol < self.get_thresholds()["rvol_min"]:
             return -4.0
         return -abs(float(max_loss))
+
+
+    def check_micro_momentum(self, symbol, avg_daily_volume):
+        """
+        PM ARCHITECTURE UPGRADE 2: Micro-Momentum Tape Filter
+        Fetches 1-minute or 5-minute data. If the volume in the last 5 minutes
+        is less than 5% of the average daily volume, the stock is just drifting, not exploding.
+        """
+        import time
+        import yfinance as yf
+        
+        try:
+            # We want an actual tape reading, so we don't cache this. We fetch live.
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period="1d", interval="5m")
+            if hist.empty:
+                return True # Fallback if no 5m data
+                
+            last_5m_vol = hist['Volume'].iloc[-1]
+            # If the stock traded > 1% of its daily volume in just 5 minutes, it's a massive squeeze.
+            min_required_vol = avg_daily_volume * 0.01 
+            
+            # Additional check: minimum absolute volume (e.g. 10k shares in 5 mins)
+            if last_5m_vol < min_required_vol and last_5m_vol < 20000:
+                return False
+                
+            return True
+        except Exception as e:
+            return True # Fallback on error

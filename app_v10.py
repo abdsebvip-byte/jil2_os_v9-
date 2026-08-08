@@ -558,12 +558,13 @@ else:
 st.markdown("---")
 
 # 4. علامات التبويب الموزعة للفترات
-t_halts, t1, t2, t3, t_trace, t4, t5, t6, t7 = st.tabs([
+t_halts, t1, t2, t3, t_trace, t_whale, t4, t5, t6, t7 = st.tabs([
     "🚨 صفقات الاستئناف (LULD Halts)",
     "🛰️ جلسة ما قبل السوق", 
     "📊 الجلسة الرسمية للسوق", 
     "🌙 جلسة بعد الإغلاق", 
     "🔍 سجل الاستبعاد والقرارات (Decision Trace)",
+    "🐳 رادار الحيتان",
     "📡 رادار الأخبار الفورية (SEC)",
     "🏆 سجل صيد اليقين التراكمي",
     "📊 محرك الاختبار التاريخي",
@@ -739,8 +740,19 @@ def run_session_pipeline(session_name):
                         )
 
     # جلب أحدث النتائج المقبولة فورياً من قاعدة البيانات (0 ثانية تحميل)
+    # جلب أحدث النتائج المقبولة في آخر 4 ساعات (لتفادي عرض تجارب الأيام السابقة كفرص حالية)
     recent_traces = db.get_recent_evaluations(limit=200)
-    accepted_traces = [t for t in recent_traces if t.get("status") == "ACCEPTED"]
+    accepted_traces = []
+    from datetime import datetime, timedelta
+    cutoff_time = datetime.now() - timedelta(hours=4)
+    for t in recent_traces:
+        if t.get("status") == "ACCEPTED":
+            try:
+                eval_time = datetime.fromisoformat(t.get("evaluated_at"))
+                if eval_time >= cutoff_time:
+                    accepted_traces.append(t)
+            except Exception:
+                accepted_traces.append(t)
     active_halts = get_active_halts()
 
     opportunities = []
@@ -792,38 +804,9 @@ def run_session_pipeline(session_name):
         df_opportunities["ML_Probability"] = df_opportunities["ML_Probability"].fillna(0.0)
         df_opportunities = df_opportunities.sort_values(by=["Conviction_Score", "ML_Probability"], ascending=[False, False])
         
-        st.markdown("""
-        <div class="ai-section">
-            <h3 style="color:#3b82f6;margin:0 0 10px 0;font-size:20px;">🔍 محرك رصد الشذوذ الحجمي اللحظي (Anomaly Detection Engine)</h3>
-            <p style="color:#94a3b8;font-size:14px;margin-bottom:15px;">
-                عرض لحظي مباشر من المحرك للرموز التي تشهد انحرافاً حاداً في الحجم النسبي (RVOL) والتجميع اللحظي.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        df_anomalies = df_opportunities[df_opportunities["Is_Anomaly"] == True].copy()
-        
         c_anom1, c_anom2 = st.columns(2)
         with c_anom1:
-            st.metric(label="عدد الفرص الجارية بالفحص", value=f"{len(df_opportunities)} شركة")
-        with c_anom2:
-            st.metric(label="الانفجارات الحجمية المكتشفة", value=f"{len(df_anomalies)} أسهم شاذة")
-        
-        if not df_anomalies.empty:
-            st.write("📈 **قائمة الأسهم التي تشهد تجميعاً ونشاطاً استثنائياً حالياً:**")
-            cols_anom = ["Symbol", "Price", "Change_%", "Volume", "RVOL", "Confidence_Score"]
-            exist_anom = [c for c in cols_anom if c in df_anomalies.columns]
-            df_anom_display = df_anomalies[exist_anom].copy()
-            col_anom_map = {
-                "Symbol": "رمز السهم",
-                "Price": "السعر اللحظي",
-                "Change_%": "التغير المئوي",
-                "Volume": "الحجم اليومي",
-                "RVOL": "الحجم النسبي RVOL",
-                "Confidence_Score": "مؤشر ثقة الاختراق (0-10)"
-            }
-            df_anom_display.rename(columns=col_anom_map, inplace=True)
-            st.markdown(render_premium_table(df_anom_display), unsafe_allow_html=True)
+            st.metric(label="فرص التداول المطابقة لليوم", value=f"{len(df_opportunities)} أسهم ممتازة")
         
         top_stock = df_opportunities.iloc[0]
         matches = top_stock["Matches"]
@@ -938,7 +921,31 @@ with t3:
     else:
         st.info("💡 اضغط على زر 'تشغيل الفحص التلقائي المستمر' لمراقبة جلسة الليل بشكل مستمر دون اختفاء البيانات عند تحديث الصفحة.")
 
+
+with t_whale:
+    st.markdown("### 🐳 رادار الحيتان: التمركز الاستباقي (Pre-Breakout Predictor)")
+    st.write("يقوم هذا الرادار بمسح سيولة ما قبل الافتتاح والساعة الأخيرة من السوق لاصطياد المحافظ الكبيرة التي تجمع بهدوء في أسهم صغيرة، تحضيراً لرفعها في الجلسة القادمة.")
+    
+    import sqlite3
+    conn = sqlite3.connect(r'C:\Users\sahar\.gemini\antigravity\scratch\jil2_os_v9\quant_platform.db')
+    whale_alerts = pd.read_sql_query("SELECT symbol, price, change_pct, rvol, market_cap, reason FROM whale_alerts ORDER BY rvol DESC", conn)
+    conn.close()
+    
+    if not whale_alerts.empty:
+        st.warning("⚠️ **تنبيه:** هذه الأسهم لقائمة المراقبة والتمركز المبكر (Watchlist). احذر من فخاخ الهوامير الوهمية (Fakeouts).")
+        st.dataframe(whale_alerts.rename(columns={
+            "symbol": "رمز السهم",
+            "price": "السعر اللحظي",
+            "change_pct": "التغير (%)",
+            "rvol": "مضاعف السيولة (RVOL)",
+            "market_cap": "القيمة السوقية",
+            "reason": "سبب الترشيح (السر)"
+        }), use_container_width=True, hide_index=True)
+    else:
+        st.info("هدوء تام.. لم يرصد رادار الحيتان أي نشاط تجميعي مريب للتحضير للجلسة القادمة.")
+
 with t_trace:
+
     st.markdown("### 🔍 سجل تتبع القرارات والاستبعاد التفصيلي (Decision & Exclusion Trace)")
     st.write("يعرض هذا السجل كافة الرموز والأسهم التي خضعت لتقييم المنصة وسبب القبول أو الرفض التفصيلي لكل سهم لضمان الشفافية بنسبة 100%.")
     
@@ -968,9 +975,18 @@ with t_trace:
             # Translate status labels
             df_evals["حالة القرار"] = df_evals["status"].apply(lambda s: "🟢 مقبول" if s == "ACCEPTED" else "🔴 مستبعد")
             
+            # Add Telegram Status
+            from datetime import datetime
+            sent_today = db_eval.get_alerts_history(limit=50)
+            sent_symbols = {s["symbol"] for s in sent_today if s.get("sent_at", "").startswith(datetime.now().strftime("%Y-%m-%d"))}
+            df_evals["حالة التلجرام"] = df_evals.apply(
+                lambda row: "✅ أُرسل / 🔕 التكرار محجوب" if row["symbol"] in sent_symbols and row["status"] == "ACCEPTED" else "—", 
+                axis=1
+            )
+            
             # Select columns to display
-            df_display = df_evals[["evaluated_at", "symbol", "price", "change", "rvol", "score", "ml_prob", "حالة القرار", "rejection_reason"]].copy()
-            df_display.columns = ["توقيت الفحص", "رمز السهم", "السعر", "التغير اليومي", "الحجم النسبي RVOL", "درجة القناعة", "احتمالية ML", "الحالة", "سبب القرار / الاستبعاد"]
+            df_display = df_evals[["evaluated_at", "symbol", "price", "change", "rvol", "score", "ml_prob", "حالة القرار", "حالة التلجرام", "rejection_reason"]].copy()
+            df_display.columns = ["توقيت الفحص", "رمز السهم", "السعر", "التغير اليومي", "الحجم النسبي RVOL", "درجة القناعة", "احتمالية ML", "الحالة", "حالة التلجرام", "سبب القرار / الاستبعاد"]
             
             st.dataframe(df_display, use_container_width=True, hide_index=True)
         else:
