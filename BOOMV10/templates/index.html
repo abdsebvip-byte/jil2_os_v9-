@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BOOM V10 Terminal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        darkBg: '#0b0e14',
+                        panelBg: '#151924',
+                        borderColor: '#1f2937',
+                        primary: '#3b82f6',
+                        success: '#10b981',
+                        warning: '#f59e0b',
+                        danger: '#ef4444',
+                        textMain: '#d1d5db',
+                        textMuted: '#9ca3af'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #0b0e14; color: #d1d5db; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; margin:0; padding:0; }
+        .scrollable { overflow-y: auto; overflow-x: hidden; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0b0e14; }
+        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+        
+        /* Custom Tab Styles */
+        .tab-btn { padding: 10px 0; text-align: center; cursor: pointer; border-bottom: 2px solid transparent; color: #9ca3af; transition: all 0.3s; font-weight: 600; font-size: 14px;}
+        .tab-btn.active { color: #3b82f6; border-bottom: 2px solid #3b82f6; }
+        .tab-btn:hover:not(.active) { color: #d1d5db; }
+        
+        /* Stock Card Hover Effect */
+        .stock-card { transition: all 0.2s; cursor: pointer; }
+        .stock-card:hover { background-color: #1f2937; border-color: #374151; }
+        .stock-card.selected { background-color: #1e3a8a; border-color: #3b82f6; }
+    </style>
+</head>
+<body class="h-screen flex flex-col">
+
+    <!-- Top Header -->
+    <header class="h-14 bg-panelBg border-b border-borderColor flex items-center justify-between px-6 shrink-0">
+        <div class="flex items-center gap-4">
+            <span class="text-xl font-bold text-white"><i class="fa-solid fa-rocket text-primary mr-2"></i> BOOM V10 <span class="text-xs font-normal text-textMuted ml-2">Terminal</span></span>
+        </div>
+        <div class="flex items-center gap-6">
+            <button id="btn-toggle-view" onclick="toggleGlobalRadar()" class="bg-primary/20 hover:bg-primary/40 text-primary border border-primary/50 font-bold py-1 px-3 rounded transition-colors text-sm flex items-center gap-2">
+                <i class="fa-solid fa-globe"></i> رادار السوق الكلي (النماذج)
+            </button>
+            <div class="flex items-center text-sm gap-2">
+                <div class="w-2 h-2 rounded-full bg-success animate-pulse"></div>
+                <span class="text-success font-medium">متصل بالرادار الحي</span>
+            </div>
+            <div class="text-sm text-textMuted bg-darkBg px-3 py-1 rounded-full border border-borderColor">
+                توقيت نيويورك: <span id="ny-time" class="text-white font-mono">--:--:--</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Grid (3 Columns) - Explosive Radar -->
+    <div id="main-dashboard" class="flex-1 flex overflow-hidden p-2 gap-2">
+        
+        <!-- Left Panel: Scanner & Sessions (20%) -->
+        <div class="w-1/5 bg-panelBg rounded-lg border border-borderColor flex flex-col overflow-hidden">
+            <!-- Tabs -->
+            <div class="flex border-b border-borderColor">
+                <div class="flex-1 tab-btn" onclick="loadStocks('PM', this)"><i class="fa-solid fa-sun mr-1"></i> ما قبل السوق</div>
+                <div class="flex-1 tab-btn active" onclick="loadStocks('REGULAR', this)"><i class="fa-solid fa-chart-line mr-1"></i> الرسمية</div>
+                <div class="flex-1 tab-btn" onclick="loadStocks('AH', this)"><i class="fa-solid fa-moon mr-1"></i> المسائية</div>
+            </div>
+            
+            <!-- List -->
+            <div id="stock-list" class="flex-1 scrollable p-2 flex flex-col gap-2">
+                <div class="text-center text-textMuted mt-10 text-sm"><i class="fa-solid fa-spinner fa-spin text-2xl mb-2"></i><br>جاري جلب الأسهم الانفجارية...</div>
+            </div>
+        </div>
+
+        <!-- Center Panel: TradingView Chart (60%) -->
+        <div class="w-3/5 bg-panelBg rounded-lg border border-borderColor overflow-hidden relative" id="tv-container">
+            <!-- Chart goes here via JS -->
+            <div id="tradingview_advanced" class="w-full h-full"></div>
+        </div>
+
+        <!-- Right Panel: AI & Patterns (20%) -->
+        <div class="w-1/5 bg-panelBg rounded-lg border border-borderColor flex flex-col overflow-hidden">
+            <div class="p-3 border-b border-borderColor bg-darkBg">
+                <h3 class="font-bold text-white text-sm"><i class="fa-solid fa-brain text-primary mr-2"></i> الذكاء الفني (AI Patterns)</h3>
+            </div>
+            
+            <div class="flex-1 scrollable p-3">
+                <div class="mb-4 text-sm text-textMuted">يتم تحليل السهم المعروض أوتوماتيكياً لاكتشاف النماذج الانفجارية (أعلام، مثلثات).</div>
+                
+                <div id="ai-result" class="hidden flex flex-col gap-3">
+                    <div class="bg-darkBg border border-success/30 rounded-lg p-3">
+                        <div class="flex justify-between items-start mb-2">
+                            <span class="text-white font-bold text-sm" id="pattern-name">علم صاعد</span>
+                            <span class="text-success text-xs font-mono bg-success/10 px-2 py-0.5 rounded" id="pattern-type">BULLISH</span>
+                        </div>
+                        <p class="text-xs text-textMuted mb-3" id="pattern-desc">انفجار قوي متبوع بتجميع هابط صحي.</p>
+                        
+                        <div class="w-full bg-borderColor rounded-full h-1.5 mb-1">
+                            <div class="bg-success h-1.5 rounded-full" id="pattern-prob-bar" style="width: 85%"></div>
+                        </div>
+                        <div class="text-[10px] text-right text-success font-bold" id="pattern-prob-text">85% دقة</div>
+                    </div>
+                </div>
+                
+                <div id="ai-loading" class="text-center text-textMuted mt-10 text-sm hidden">
+                    <i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2 text-primary"></i><br>جاري المعالجة الرياضية...
+                </div>
+                
+                <!-- Deep Analysis Section -->
+                <div id="deep-analysis" class="hidden mt-4 pt-4 border-t border-borderColor">
+                    <h4 class="text-xs font-bold text-white mb-3"><i class="fa-solid fa-microscope text-primary mr-1"></i> فحص الخوارزميات العميقة (V9)</h4>
+                    <div class="flex flex-col gap-2">
+                        <div class="bg-darkBg rounded p-2 text-xs border border-borderColor flex justify-between">
+                            <span class="text-textMuted">رادار الانفجارات:</span>
+                            <span id="da-v9" class="font-bold">--</span>
+                        </div>
+                        <div class="bg-darkBg rounded p-2 text-xs border border-borderColor flex justify-between">
+                            <span class="text-textMuted">نشاط الحيتان:</span>
+                            <span id="da-whale" class="font-bold truncate max-w-[120px]" title="">--</span>
+                        </div>
+                        <div class="bg-darkBg rounded p-2 text-xs border border-borderColor flex justify-between">
+                            <span class="text-textMuted">حالة السيولة:</span>
+                            <span id="da-liquidity" class="font-bold">--</span>
+                        </div>
+                        <div class="bg-darkBg rounded p-2 text-xs border border-borderColor flex justify-between">
+                            <span class="text-textMuted">قوة الشراء:</span>
+                            <span id="da-buying" class="font-bold">--</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="ai-empty" class="text-center text-textMuted mt-10 text-sm">
+                    اختر سهماً من القائمة لتشغيل المحرك الذكي.
+                </div>
+                
+                <div id="ai-none" class="hidden text-center text-textMuted mt-10 text-sm p-4 bg-darkBg rounded-lg border border-borderColor">
+                    <i class="fa-solid fa-shield-halved text-2xl mb-2 text-textMuted"></i><br>السهم لا يشكل أي نموذج هندسي انفجاري واضح حالياً.
+                </div>
+            </div>
+            
+            <!-- Whale Radar Section -->
+            <div class="p-3 border-t border-borderColor bg-darkBg">
+                <h3 class="font-bold text-white text-sm mb-3"><i class="fa-solid fa-water text-primary mr-2"></i> رادار الحيتان (مباشر)</h3>
+                <div id="whale-list" class="flex flex-col gap-2 max-h-40 scrollable">
+                    <div class="text-center text-textMuted text-xs">جاري جلب تحركات الحيتان...</div>
+                </div>
+            </div>
+            
+            <!-- System Controls -->
+            <div class="p-3 border-t border-borderColor bg-darkBg">
+                <button class="w-full bg-primary/10 hover:bg-primary/20 text-primary border border-primary/50 font-bold py-2 px-4 rounded transition-colors text-sm">
+                    <i class="fa-solid fa-sync mr-2"></i> تحديث قسري للمحرك
+                </button>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Global Patterns Dashboard (2 Columns) - Study Mode -->
+    <div id="global-dashboard" class="hidden flex-1 flex overflow-hidden p-2 gap-4">
+        
+        <!-- Left Panel: Chart & Explanation (60%) -->
+        <div class="w-3/5 flex flex-col gap-2">
+            <!-- Chart Container -->
+            <div class="flex-1 bg-panelBg rounded-lg border border-borderColor overflow-hidden" id="tv-global-container">
+                <div id="tradingview_global" class="w-full h-full"></div>
+            </div>
+            
+            <!-- AI Explanation -->
+            <div class="h-48 bg-panelBg rounded-lg border border-borderColor p-4 flex flex-col">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 id="gp-symbol-title" class="text-white font-bold text-lg">--</h3>
+                    <span id="gp-pattern-badge" class="bg-primary/20 text-primary px-3 py-1 rounded text-sm font-bold">--</span>
+                </div>
+                <p id="gp-pattern-desc" class="text-textMuted text-sm leading-relaxed mb-4">اختر سهماً من القائمة لعرض التحليل العميق للنموذج الفني المتكون.</p>
+                
+                <!-- Deep Analysis Summary -->
+                <div id="gp-deep-analysis" class="hidden mt-auto grid grid-cols-4 gap-2 text-center border-t border-borderColor pt-3">
+                    <div>
+                        <div class="text-[10px] text-textMuted mb-1">الانفجارات (V9)</div>
+                        <div id="gp-da-v9" class="text-xs font-bold truncate">--</div>
+                    </div>
+                    <div>
+                        <div class="text-[10px] text-textMuted mb-1">نشاط الحيتان</div>
+                        <div id="gp-da-whale" class="text-xs font-bold truncate" title="">--</div>
+                    </div>
+                    <div>
+                        <div class="text-[10px] text-textMuted mb-1">السيولة</div>
+                        <div id="gp-da-liquidity" class="text-xs font-bold truncate">--</div>
+                    </div>
+                    <div>
+                        <div class="text-[10px] text-textMuted mb-1">قوة الشراء</div>
+                        <div id="gp-da-buying" class="text-xs font-bold truncate">--</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Right Panel: Global Patterns List (40%) -->
+        <div class="w-2/5 bg-panelBg rounded-lg border border-borderColor flex flex-col overflow-hidden">
+            <div class="p-4 border-b border-borderColor flex justify-between items-center bg-darkBg">
+                <div>
+                    <h2 class="text-white font-bold text-lg"><i class="fa-solid fa-globe text-primary mr-2"></i> النماذج الفنية (السوق الكلي)</h2>
+                    <p class="text-textMuted text-[10px] mt-1">مسح شامل لأقوى 100 سهم في السوق الأمريكي</p>
+                </div>
+                <div class="text-success text-xs font-bold border border-success/30 bg-success/10 px-2 py-1 rounded">
+                    <i class="fa-solid fa-circle-check"></i> يعمل بالخلفية
+                </div>
+            </div>
+            
+            <div id="global-pattern-list" class="flex-1 scrollable p-3 flex flex-col gap-3">
+                <div class="text-center text-textMuted mt-10 text-sm"><i class="fa-solid fa-spinner fa-spin text-2xl mb-2 text-primary"></i><br>جاري البحث في أسهم السوق...</div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Scripts -->
+    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+    <script>
+        let currentSymbol = "AAPL"; // Default
+        let tvWidget = null;
+
+        // --- Clock ---
+        setInterval(() => {
+            let options = { timeZone: 'America/New_York', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' };
+            document.getElementById('ny-time').innerText = new Date().toLocaleTimeString('en-US', options);
+        }, 1000);
+
+        // --- TradingView Setup (Clean, no popups) ---
+        function initChart(symbol) {
+            currentSymbol = symbol;
+            if (tvWidget) {
+                // To safely update symbol, we can just re-render to avoid widget glitches
+                document.getElementById('tradingview_advanced').innerHTML = '';
+            }
+            
+            tvWidget = new TradingView.widget({
+                "autosize": true,
+                "symbol": symbol,
+                "interval": "15",
+                "timezone": "America/New_York",
+                "theme": "dark",
+                "style": "1", // Candlesticks
+                "locale": "ar_AE",
+                "enable_publishing": false,
+                "backgroundColor": "#151924", // Match panel background
+                "gridColor": "#1f2937",
+                "hide_top_toolbar": false, // Keep toolbar for timeframes
+                "hide_side_toolbar": false,
+                "hide_legend": false,
+                "save_image": false,
+                "container_id": "tradingview_advanced",
+                "toolbar_bg": "#0b0e14",
+                "withdateranges": true,
+                "disabled_features": [
+                    "header_symbol_search", // Block user from searching randomly, forces them to use our left menu
+                    "header_compare"
+                ]
+                // NOTICE: "studies" array is REMOVED to prevent the "Look first / Then leap" Pro Popup!
+                // The user can still add their own indicators manually using the top toolbar button without hitting the wall immediately.
+            });
+            
+            // Run AI analysis
+            runAIAnalysis(symbol);
+        }
+
+        // --- Fetch Stocks from Python API ---
+        async function loadStocks(sessionType, btnElement, isAutoRefresh = false) {
+            activeSession = sessionType;
+            if(btnElement) {
+                document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+                btnElement.classList.add('active');
+            }
+            
+            const listDiv = document.getElementById('stock-list');
+            if(!isAutoRefresh) {
+                listDiv.innerHTML = '<div class="text-center text-textMuted mt-10 text-sm"><i class="fa-solid fa-spinner fa-spin text-2xl mb-2"></i><br>جاري جلب الأسهم الانفجارية...</div>';
+            }
+
+            
+            try {
+                const response = await fetch(`/api/stocks/${sessionType}`);
+                const stocks = await response.json();
+                
+                listDiv.innerHTML = '';
+                
+                if(stocks.length === 0) {
+                    listDiv.innerHTML = '<div class="text-center text-textMuted mt-10 text-sm">لا توجد أسهم مرصودة لهذه الجلسة حتى الآن.</div>';
+                    return;
+                }
+                
+                stocks.forEach(stock => {
+                    const card = document.createElement('div');
+                    card.className = `stock-card bg-darkBg border border-borderColor rounded-md p-3 flex justify-between items-center ${stock.symbol === currentSymbol ? 'selected' : ''}`;
+                    card.onclick = () => {
+                        // Highlight selection
+                        document.querySelectorAll('.stock-card').forEach(c => c.classList.remove('selected'));
+                        card.classList.add('selected');
+                        // Update Chart & AI
+                        initChart(stock.symbol);
+                    };
+                    
+                    card.innerHTML = `
+                        <div class="flex items-center gap-3">
+                            <div class="bg-primary/20 text-primary font-bold rounded px-2 py-1 text-sm">${stock.symbol}</div>
+                            <div class="flex flex-col">
+                                <span class="text-xs text-textMuted">${stock.state}</span>
+                                <span class="text-[10px] text-textMuted">${stock.time.split(' ')[1] || stock.time}</span>
+                            </div>
+                        </div>
+                        <div class="text-right flex flex-col items-end">
+                            <span class="text-warning text-xs font-bold"><i class="fa-solid fa-fire mr-1"></i> قوة ${stock.score}</span>
+                        </div>
+                    `;
+                    listDiv.appendChild(card);
+                });
+                
+                // If this is the first load, select the first stock automatically
+                if(!tvWidget && stocks.length > 0) {
+                    initChart(stocks[0].symbol);
+                }
+                
+            } catch(e) {
+                listDiv.innerHTML = `<div class="text-center text-danger mt-10 text-sm">خطأ في الاتصال بقاعدة البيانات.</div>`;
+            }
+        }
+        
+        // --- Run Pattern Detection AI ---
+        async function runAIAnalysis(symbol) {
+            document.getElementById('ai-empty').classList.add('hidden');
+            document.getElementById('ai-result').classList.add('hidden');
+            document.getElementById('ai-none').classList.add('hidden');
+            document.getElementById('ai-loading').classList.remove('hidden');
+            
+            try {
+                // Fetch pattern
+                const res = await fetch(`/api/pattern/${symbol}`);
+                const data = await res.json();
+                
+                // Fetch deep analysis concurrently
+                const deepRes = await fetch(`/api/deep_analysis/${symbol}`);
+                const deepData = await deepRes.json();
+                
+                document.getElementById('ai-loading').classList.add('hidden');
+                
+                if (data.status === 'found') {
+                    document.getElementById('ai-result').classList.remove('hidden');
+                    document.getElementById('pattern-name').innerText = data.pattern.pattern;
+                    document.getElementById('pattern-desc').innerText = data.pattern.details;
+                    document.getElementById('pattern-type').innerText = data.pattern.type;
+                    
+                    const bar = document.getElementById('pattern-prob-bar');
+                    const text = document.getElementById('pattern-prob-text');
+                    
+                    bar.style.width = `${data.pattern.probability}%`;
+                    text.innerText = `${data.pattern.probability}% الدقة`;
+                    
+                    if(data.pattern.type === 'BULLISH') {
+                        bar.className = "bg-success h-1.5 rounded-full";
+                        text.className = "text-[10px] text-right text-success font-bold";
+                        document.getElementById('pattern-type').className = "text-success text-xs font-mono bg-success/10 px-2 py-0.5 rounded border border-success/30";
+                    } else if (data.pattern.type === 'BEARISH') {
+                        bar.className = "bg-danger h-1.5 rounded-full";
+                        text.className = "text-[10px] text-right text-danger font-bold";
+                        document.getElementById('pattern-type').className = "text-danger text-xs font-mono bg-danger/10 px-2 py-0.5 rounded border border-danger/30";
+                    } else {
+                        bar.className = "bg-warning h-1.5 rounded-full";
+                        text.className = "text-[10px] text-right text-warning font-bold";
+                        document.getElementById('pattern-type').className = "text-warning text-xs font-mono bg-warning/10 px-2 py-0.5 rounded border border-warning/30";
+                    }
+                    
+                } else {
+                    document.getElementById('ai-none').classList.remove('hidden');
+                }
+                
+                // Show Deep Analysis
+                if (!deepData.error) {
+                    document.getElementById('deep-analysis').classList.remove('hidden');
+                    document.getElementById('da-v9').innerText = deepData.v9_condition;
+                    document.getElementById('da-v9').className = deepData.v9_score > 0 ? "font-bold text-success" : "font-bold text-textMuted";
+                    
+                    document.getElementById('da-whale').innerText = deepData.whale_activity;
+                    document.getElementById('da-whale').title = deepData.whale_activity;
+                    
+                    document.getElementById('da-liquidity').innerText = deepData.liquidity;
+                    document.getElementById('da-liquidity').className = deepData.liquidity.includes("عالية") ? "font-bold text-success" : "font-bold text-textMuted";
+                    
+                    document.getElementById('da-buying').innerText = deepData.buying_pressure;
+                    document.getElementById('da-buying').className = deepData.buying_pressure.includes("إيجابية") ? "font-bold text-success" : "font-bold text-danger";
+                }
+                
+            } catch(e) {
+                document.getElementById('ai-loading').classList.add('hidden');
+                document.getElementById('ai-none').classList.remove('hidden');
+                document.getElementById('ai-none').innerHTML = 'تعذر الاتصال بالمحرك الرياضي.';
+            }
+        }
+
+        // --- Fetch Whale Alerts ---
+        async function fetchWhales() {
+            try {
+                const response = await fetch('/api/whales');
+                const whales = await response.json();
+                const list = document.getElementById('whale-list');
+                list.innerHTML = '';
+                
+                if (whales.length === 0) {
+                    list.innerHTML = '<div class="text-center text-textMuted text-xs">لا يوجد نشاط حيتان حالياً.</div>';
+                    return;
+                }
+                
+                whales.forEach(w => {
+                    const isBullish = w.impact >= 0;
+                    const colorClass = isBullish ? 'text-success' : 'text-danger';
+                    const icon = isBullish ? 'fa-arrow-up' : 'fa-arrow-down';
+                    
+                    list.innerHTML += `
+                    <div class="bg-panelBg border border-borderColor rounded p-2 text-xs">
+                        <div class="flex justify-between items-center font-bold mb-1">
+                            <span class="text-white">${w.symbol}</span>
+                            <span class="${colorClass}"><i class="fa-solid ${icon}"></i> ${w.impact}%</span>
+                        </div>
+                        <div class="text-textMuted text-[10px] truncate" title="${w.reason}">${w.reason}</div>
+                    </div>
+                    `;
+                });
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        // --- Global Pattern Scanner Logic ---
+        let tvGlobalChart = null;
+        
+        async function initGlobalChart(symbol) {
+            const container = document.getElementById('tradingview_global');
+            container.innerHTML = '<div class="w-full h-full flex items-center justify-center text-textMuted"><i class="fa-solid fa-spinner fa-spin text-3xl text-primary"></i></div>';
+            
+            try {
+                const res = await fetch(`/api/chart_data/${symbol}`);
+                const data = await res.json();
+                
+                container.innerHTML = ''; // Clear loading
+                
+                if (tvGlobalChart) {
+                    tvGlobalChart.remove();
+                }
+                
+                // Initialize Lightweight Chart
+                tvGlobalChart = LightweightCharts.createChart(container, {
+                    width: container.clientWidth,
+                    height: container.clientHeight,
+                    layout: {
+                        background: { type: 'solid', color: '#151924' },
+                        textColor: '#d1d5db',
+                    },
+                    grid: {
+                        vertLines: { color: '#1f2937' },
+                        horzLines: { color: '#1f2937' },
+                    },
+                    rightPriceScale: {
+                        borderColor: '#1f2937',
+                    },
+                    timeScale: {
+                        borderColor: '#1f2937',
+                        timeVisible: true,
+                    },
+                });
+                
+                // Resize handler
+                new ResizeObserver(entries => {
+                    if (entries.length === 0 || entries[0].target !== container) { return; }
+                    const newRect = entries[0].contentRect;
+                    tvGlobalChart.applyOptions({ height: newRect.height, width: newRect.width });
+                }).observe(container);
+
+                const candleSeries = tvGlobalChart.addCandlestickSeries({
+                    upColor: '#10b981',
+                    downColor: '#ef4444',
+                    borderVisible: false,
+                    wickUpColor: '#10b981',
+                    wickDownColor: '#ef4444',
+                });
+                
+                candleSeries.setData(data.candles);
+                
+                // Draw Pattern Lines if available
+                if (data.pattern && data.pattern.lines) {
+                    const resSeries = tvGlobalChart.addLineSeries({
+                        color: '#10b981', // Green for resistance
+                        lineWidth: 2,
+                        lineStyle: 0, // Solid
+                        crosshairMarkerVisible: false,
+                    });
+                    resSeries.setData(data.pattern.lines.resistance);
+                    
+                    const supSeries = tvGlobalChart.addLineSeries({
+                        color: '#ef4444', // Red for support
+                        lineWidth: 2,
+                        lineStyle: 0, // Solid
+                        crosshairMarkerVisible: false,
+                    });
+                    supSeries.setData(data.pattern.lines.support);
+                }
+                
+                tvGlobalChart.timeScale().fitContent();
+                
+            } catch (e) {
+                console.error("Chart Render Error:", e);
+                container.innerHTML = `<div class="w-full h-full flex flex-col items-center justify-center text-danger text-center"><p class="font-bold">خطأ في تحميل بيانات الشارت</p><p class="text-xs text-textMuted mt-2">${e.message}</p></div>`;
+            }
+            
+            // Run Deep Analysis for global page
+            fetchGlobalDeepAnalysis(symbol);
+        }
+
+        async function fetchGlobalDeepAnalysis(symbol) {
+            try {
+                const deepRes = await fetch(`/api/deep_analysis/${symbol}`);
+                const deepData = await deepRes.json();
+                
+                if (!deepData.error) {
+                    document.getElementById('gp-deep-analysis').classList.remove('hidden');
+                    document.getElementById('gp-da-v9').innerText = deepData.v9_condition;
+                    document.getElementById('gp-da-v9').className = deepData.v9_score > 0 ? "text-xs font-bold truncate text-success" : "text-xs font-bold truncate text-textMuted";
+                    
+                    document.getElementById('gp-da-whale').innerText = deepData.whale_activity;
+                    document.getElementById('gp-da-whale').title = deepData.whale_activity;
+                    
+                    document.getElementById('gp-da-liquidity').innerText = deepData.liquidity;
+                    document.getElementById('gp-da-liquidity').className = deepData.liquidity.includes("عالية") ? "text-xs font-bold truncate text-success" : "text-xs font-bold truncate text-textMuted";
+                    
+                    document.getElementById('gp-da-buying').innerText = deepData.buying_pressure;
+                    document.getElementById('gp-da-buying').className = deepData.buying_pressure.includes("إيجابية") ? "text-xs font-bold truncate text-success" : "text-xs font-bold truncate text-danger";
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        function selectGlobalPattern(symbol, patternName, details, isBullish) {
+            document.getElementById('gp-symbol-title').innerText = symbol;
+            document.getElementById('gp-pattern-badge').innerText = patternName;
+            document.getElementById('gp-pattern-badge').className = isBullish ? "bg-success/20 text-success px-3 py-1 rounded text-sm font-bold" : "bg-danger/20 text-danger px-3 py-1 rounded text-sm font-bold";
+            document.getElementById('gp-pattern-desc').innerText = details;
+            
+            initGlobalChart(symbol);
+        }
+
+        function toggleGlobalRadar() {
+            const main = document.getElementById('main-dashboard');
+            const global = document.getElementById('global-dashboard');
+            const btn = document.getElementById('btn-toggle-view');
+            
+            if (global.classList.contains('hidden')) {
+                // Open Global View
+                main.classList.add('hidden');
+                global.classList.remove('hidden');
+                btn.innerHTML = '<i class="fa-solid fa-arrow-right"></i> العودة للرئيسية';
+                btn.classList.replace('text-primary', 'text-white');
+                btn.classList.replace('bg-primary/20', 'bg-danger/50');
+                btn.classList.replace('border-primary/50', 'border-danger');
+                fetchGlobalPatterns();
+            } else {
+                // Back to Main View
+                global.classList.add('hidden');
+                main.classList.remove('hidden');
+                btn.innerHTML = '<i class="fa-solid fa-globe"></i> رادار السوق الكلي (النماذج)';
+                btn.classList.replace('text-white', 'text-primary');
+                btn.classList.replace('bg-danger/50', 'bg-primary/20');
+                btn.classList.replace('border-danger', 'border-primary/50');
+            }
+        }
+
+        async function fetchGlobalPatterns() {
+            const list = document.getElementById('global-pattern-list');
+            list.innerHTML = '<div class="text-center text-textMuted mt-10 text-sm"><i class="fa-solid fa-spinner fa-spin text-2xl mb-2 text-primary"></i><br>جاري البحث في أسهم السوق...</div>';
+            
+            try {
+                const response = await fetch('/api/global_patterns');
+                const patterns = await response.json();
+                
+                list.innerHTML = '';
+                
+                if (patterns.length === 0) {
+                    list.innerHTML = '<div class="text-center text-textMuted text-xs mt-5">لا يوجد أي نماذج مكتملة حالياً في السوق.</div>';
+                    return;
+                }
+                
+                patterns.forEach((p, index) => {
+                    const isBullish = p.type === 'BULLISH';
+                    const colorHex = isBullish ? '#10b981' : (p.type === 'BEARISH' ? '#ef4444' : '#f59e0b');
+                    const colorClass = isBullish ? 'text-success' : (p.type === 'BEARISH' ? 'text-danger' : 'text-warning');
+                    const icon = isBullish ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down';
+                    
+                    list.innerHTML += `
+                    <div class="bg-darkBg border border-borderColor rounded-lg p-3 hover:border-primary transition-colors cursor-pointer" onclick="selectGlobalPattern('${p.symbol}', '${p.pattern}', '${p.details}', ${isBullish})">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-textMuted text-xs font-mono">${p.time.split('T')[1].substring(0,5)}</span>
+                            <span class="text-white font-bold">${p.symbol}</span>
+                        </div>
+                        <div class="flex justify-between items-center mb-3">
+                            <div class="flex items-center gap-4">
+                                <!-- Circle Meter -->
+                                <div class="relative w-10 h-10 flex items-center justify-center">
+                                    <svg class="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
+                                        <path class="text-borderColor" stroke-width="3" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                        <path style="color: ${colorHex};" stroke-width="3" stroke-dasharray="${p.probability}, 100" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                                    </svg>
+                                    <span class="absolute text-[9px] font-bold text-white">${Math.round(p.probability)}%</span>
+                                </div>
+                                <div class="flex flex-col">
+                                    <span class="text-textMuted text-[10px]">الدقة</span>
+                                </div>
+                            </div>
+                            
+                            <div class="flex flex-col items-end">
+                                <span class="${colorClass} text-xs font-bold"><i class="fa-solid ${icon} mr-1"></i> ${p.pattern}</span>
+                            </div>
+                        </div>
+                        <p class="text-textMuted text-[11px] leading-relaxed truncate">${p.details}</p>
+                    </div>
+                    `;
+                    
+                    // Auto select the first pattern on load
+                    if(index === 0 && !tvGlobalChart) {
+                        selectGlobalPattern(p.symbol, p.pattern, p.details, isBullish);
+                    }
+                });
+            } catch(e) {
+                list.innerHTML = '<div class="text-center text-danger mt-10 text-sm">حدث خطأ أثناء جلب النماذج.</div>';
+            }
+        }
+
+        // Initialize App
+        let activeSession = 'REGULAR';
+        window.onload = () => {
+            document.querySelectorAll('.tab-btn')[1].click();
+            fetchWhales();
+            
+            // Auto Refresh Loop (Every 15 seconds)
+            setInterval(() => {
+                loadStocks(activeSession, null, true);
+                fetchWhales();
+            }, 15000);
+        };
+    </script>
+</body>
+</html>

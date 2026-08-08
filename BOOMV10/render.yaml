@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: explosive-stock-scanner
+    env: docker
+    region: oregon
+    plan: free
+    dockerfilePath: ./Dockerfile
+    buildCommand: ""
+    startCommand: ""
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: OTHER_ENV_VARS
+        sync: false
